@@ -15,12 +15,15 @@ library(rotl)
 library(picante)
 library(taxize)
 library(ggplot2)
+library(ggtree)
 library(ggvegan)
 library(corrplot)
 library(permute)
 library(cluster)
 library(plotrix)
 library(dplyr)
+library(data.tree)
+library(DiagrammeR)
 
 
 # sampling data
@@ -30,6 +33,7 @@ samp_meta <- read_csv(file = 'data/sample_metadata.csv')
 samp_meta$DOC_uM <- as.numeric(samp_meta$DOC_uM)
 samp_meta$DOC_mgL <- as.numeric(samp_meta$DOC_mgL)
 samp_meta$DOCflux_mg <- as.numeric(samp_meta$DOCflux_mg)
+samp_meta$PPL_extraction_eff <- as.numeric(samp_meta$PPL_extraction_eff)
 samp_meta$DBH_cm <- as.numeric(samp_meta$DBH_cm)
 samp_meta$BLDG_dist <- as.numeric(samp_meta$BLDG_dist)
 samp_meta$ROAD_dist <- as.numeric(samp_meta$ROAD_dist)
@@ -55,15 +59,40 @@ samp_meta$CR_cos <- as.numeric(samp_meta$CR_cos)
 #this used to be after making tf_meta if anything changes
 samp_meta$Tf_depth_mm <- samp_meta$Tf_volume_mL*1000/29460
 #29460 is bucket opening size in mm^2
+samp_meta$DOCflux_mg_m2 <- samp_meta$DOCflux_mg/.02946
+samp_meta$TDNflux_mg_m2 <- samp_meta$TDNflux_mg/.02946
 precip_bucket_avg_mm <- mean(samp_meta$Tf_depth_mm[samp_meta$Sample_type == "Precipitation"])
 precip_bucket_avg_mL <- mean(samp_meta$Tf_volume_mL[samp_meta$Sample_type == "Precipitation"])
 samp_meta$Tf_depth_pct_buckets <- samp_meta$Tf_depth_mm*100 / precip_bucket_avg_mm
 samp_meta$Tf_depth_pct_gauge <- samp_meta$Tf_depth_mm*100 / 28.956
 #rain gauge on NU campus measured total 1.14 in or 28.956 mm of rain
+mean_precip_DOC_flux_m2 <- mean(samp_meta$DOCflux_mg_m2[samp_meta$Sample_type == "Precipitation"])
+samp_meta$DOC_enrich <- samp_meta$DOCflux_mg_m2 / mean_precip_DOC_flux_m2
+mean_precip_TDN_flux_m2 <- mean(samp_meta$TDNflux_mg_m2[samp_meta$Sample_type == "Precipitation"])
+samp_meta$TDN_enrich <- samp_meta$TDNflux_mg_m2 / mean_precip_TDN_flux_m2
+samp_meta$DOC.TDN_ratio <- samp_meta$DOC_uM / samp_meta$TDN_uM
+#added those 4 lines in recently if it changes anything
+
+
+#used to be right before making norm_intens_t if anything changes
+all_samples <- samp_meta %>% pull(Sample_ID)
+#often don't want precipitation samples included
+tf_samples <- samp_meta %>% 
+  filter(Sample_type !="Precipitation") %>% pull(Sample_ID)
+precip_samples <- samp_meta %>% 
+  filter(Sample_type =="Precipitation") %>% pull(Sample_ID)
+#for use later when hybrid species will be excluded
+#don't end up using this
+tf_nonhyb_samples <- samp_meta %>% 
+  filter(PhyloName !="NA") %>% pull(Sample_ID)
+#for use later when samples with NA DOC values will be excluded
+tf_samples_w_DOC <- samp_meta %>% 
+  filter(DOC_uM !="#N/A" & Sample_type != "Precipitation") %>% pull(Sample_ID)
 
 tf_meta <- samp_meta[samp_meta$Sample_type == "Throughfall", ]
 #Used to be samp_meta[-(54:58), ] if anything changes
 precip_meta <- samp_meta[samp_meta$Sample_type == "Precipitation", ]
+
 mean(precip_meta$Tf_depth_mm)
 std.error(precip_meta$Tf_depth_mm)
 min(precip_meta$Tf_depth_mm)
@@ -73,6 +102,16 @@ mean(precip_meta$DOC_mgL)
 std.error(precip_meta$DOC_mgL)
 mean(precip_meta$TDN_mgL)
 std.error(precip_meta$TDN_mgL)
+
+mean(precip_meta$DOCflux_mg_m2)
+std.error(precip_meta$DOCflux_mg_m2)
+mean(precip_meta$TDNflux_mg_m2)
+std.error(precip_meta$TDNflux_mg_m2)
+
+mean(precip_meta$PPL_extraction_eff)
+std.error(precip_meta$PPL_extraction_eff)
+min(precip_meta$PPL_extraction_eff)
+max(precip_meta$PPL_extraction_eff)
 
 mean(tf_meta$Tf_depth_mm)
 std.error(tf_meta$Tf_depth_mm)
@@ -101,24 +140,53 @@ std.error(tf_meta$TDN_mgL)
 min(tf_meta$TDN_mgL)
 max(tf_meta$TDN_mgL)
 
-mean_precip_DOC_flux <- mean(precip_meta$DOCflux_mg)
-tf_meta$DOC_enrich <- tf_meta$DOCflux_mg / mean_precip_DOC_flux
-mean_precip_TDN_flux <- mean(precip_meta$TDNflux_mg)
-tf_meta$TDN_enrich <- tf_meta$TDNflux_mg / mean_precip_TDN_flux
+mean(tf_meta$DOCflux_mg_m2, na.rm = TRUE)
+std.error(tf_meta$DOCflux_mg_m2, na.rm = TRUE)
+min(tf_meta$DOCflux_mg_m2, na.rm = TRUE)
+max(tf_meta$DOCflux_mg_m2, na.rm = TRUE)
+
+mean(tf_meta$TDNflux_mg_m2)
+std.error(tf_meta$TDNflux_mg_m2)
+min(tf_meta$TDNflux_mg_m2)
+max(tf_meta$TDNflux_mg_m2)
 
 mean(tf_meta$DOC_enrich, na.rm = TRUE)
 std.error(tf_meta$DOC_enrich, na.rm = TRUE)
+min(tf_meta$DOC_enrich, na.rm = TRUE)
+max(tf_meta$DOC_enrich, na.rm = TRUE)
+
 mean(tf_meta$TDN_enrich)
 std.error(tf_meta$TDN_enrich)
+min(tf_meta$TDN_enrich)
+max(tf_meta$TDN_enrich)
+
+mean(tf_meta$DOC.TDN_ratio, na.rm = TRUE)
+std.error(tf_meta$DOC.TDN_ratio, na.rm = TRUE)
+min(tf_meta$DOC.TDN_ratio, na.rm = TRUE)
+max(tf_meta$DOC.TDN_ratio, na.rm = TRUE)
+
+mean(tf_meta$PPL_extraction_eff, na.rm = TRUE)
+std.error(tf_meta$PPL_extraction_eff, na.rm = TRUE)
+min(tf_meta$PPL_extraction_eff, na.rm = TRUE)
+max(tf_meta$PPL_extraction_eff, na.rm = TRUE)
 
 tf_meta %>%
   group_by(Species) %>%
   summarise_at(vars(Tf_depth_mm), list(name = mean, std.error))|> print(n=36)
 
+tf_meta %>%
+  group_by(Species) %>%
+  summarise_at(vars(Tf_depth_pct_buckets), list(name = mean, std.error))|> print(n=36)
+
 mean(tf_meta$Tf_depth_mm[tf_meta$Class == "Pinopsida"])
 std.error(tf_meta$Tf_depth_mm[tf_meta$Class == "Pinopsida"])
 mean(tf_meta$Tf_depth_mm[tf_meta$Class == "Dicotyledoneae"])
 std.error(tf_meta$Tf_depth_mm[tf_meta$Class == "Dicotyledoneae"])
+
+mean(tf_meta$Tf_depth_pct_buckets[tf_meta$Class == "Pinopsida"])
+std.error(tf_meta$Tf_depth_pct_buckets[tf_meta$Class == "Pinopsida"])
+mean(tf_meta$Tf_depth_pct_buckets[tf_meta$Class == "Dicotyledoneae"])
+std.error(tf_meta$Tf_depth_pct_buckets[tf_meta$Class == "Dicotyledoneae"])
 
 set.seed(0)
 t.test(tf_meta$Tf_depth_mm[tf_meta$Class == "Pinopsida"],
@@ -199,6 +267,8 @@ t.test(tf_meta$DOCflux_mg[tf_meta$Order == "Magnoliales"],
 
 mean(tf_meta$DOCflux_mg[tf_meta$Order == "Magnoliales"], na.rm = TRUE)
 std.error(tf_meta$DOCflux_mg[tf_meta$Order == "Magnoliales"], na.rm = TRUE)
+mean(tf_meta$DOCflux_mg_m2[tf_meta$Order == "Magnoliales"], na.rm = TRUE)
+std.error(tf_meta$DOCflux_mg_m2[tf_meta$Order == "Magnoliales"], na.rm = TRUE)
 mean(tf_meta$DOCflux_mg[tf_meta$Order != "Magnoliales"], na.rm = TRUE)
 std.error(tf_meta$DOCflux_mg[tf_meta$Order != "Magnoliales"], na.rm = TRUE)
 
@@ -213,7 +283,33 @@ t.test(tf_meta$TDNflux_mg[tf_meta$Order == "Magnoliales"],
 cor(tf_meta$DBH_cm, tf_meta$DOCflux_mg, use = "complete.obs")
 cor.test(tf_meta$DBH_cm, tf_meta$DOCflux_mg, use = "complete.obs")
 
-#Figure 1: dilution curve plot
+set.seed(0)
+t.test(tf_meta$DBH_cm[tf_meta$Class == "Pinopsida"],
+       tf_meta$DBH_cm[tf_meta$Class != "Pinopsida"])
+
+set.seed(0)
+t.test(tf_meta$DBH_cm[tf_meta$Order == "Magnoliales"],
+       tf_meta$DBH_cm[tf_meta$Order != "Magnoliales"])
+
+set.seed(0)
+t.test(tf_meta$DBH_cm[tf_meta$Order == "Pinales"],
+       tf_meta$DBH_cm[tf_meta$Order == "Magnoliales"])
+
+set.seed(0)
+t.test(tf_meta$DOC.TDN_ratio[tf_meta$Class == "Pinopsida"],
+       tf_meta$DOC.TDN_ratio[tf_meta$Class == "Dicotyledoneae"])
+
+mean(tf_meta$DOC.TDN_ratio[tf_meta$Class == "Pinopsida"], na.rm = TRUE)
+std.error(tf_meta$DOC.TDN_ratio[tf_meta$Class == "Pinopsida"], na.rm = TRUE)
+mean(tf_meta$DOC.TDN_ratio[tf_meta$Class == "Dicotyledoneae"], na.rm = TRUE)
+std.error(tf_meta$DOC.TDN_ratio[tf_meta$Class == "Dicotyledoneae"], na.rm = TRUE)
+
+
+cor(tf_meta$BLDG_dist, tf_meta$Tf_depth_mm)
+cor.test(tf_meta$BLDG_dist, tf_meta$Tf_depth_mm)
+plot(x = tf_meta$BLDG_dist, y = tf_meta$Tf_depth_mm)
+
+#Figure S4: dilution curve plot
 #first separate plots for DOC and TDN side by side
 par(mfrow = c(1, 2))
 #DOC on left
@@ -227,7 +323,7 @@ DOC_exp_fit <- nls(DOC_mgL ~ a * exp(b * Tf_depth_pct_buckets),
 DOC_smooth_x <- seq(5.59, 115.57, length.out = 300)
 DOC_smooth_y <- predict(DOC_exp_fit, newdata = data.frame(Tf_depth_pct_buckets = DOC_smooth_x))
 
-plot(x = (tf_meta$Tf_depth_pct_buckets), y = tf_meta$DOC_mgL,
+plot(x = tf_meta$Tf_depth_pct_buckets, y = tf_meta$DOC_mgL,
      xlim = c(0, 120), ylim = c(0, 140),
      xlab = "Throughfall volume (% of rainfall)",
      ylab = expression(paste("DOC concentration (mg-C L"^"-1",")")))
@@ -252,7 +348,7 @@ DOC_p_val <- pf(DOC_f_stat, df1 = 1, df2 = 77-2, lower.tail = FALSE)
 
 legend("topright", legend = c(expression(paste("y = 67.15 * e"^"-0.036x","")),
                               expression(paste("r"^"2"," = 0.217")),
-                              expression(paste("p = 1.95 * 10"^"-5",""))),
+                              expression(paste("p<0.0001"))),
        inset = c(-0.4, 0), y.intersp = 0.4,
        col = c("blue", NA, NA), lwd = c(1.5, NA, NA), bty = "n", cex = 0.75)
 text(x=5, y=133, labels = "a", cex = 2)
@@ -268,7 +364,7 @@ TDN_exp_fit <- nls(TDN_mgL ~ a * exp(b * Tf_depth_pct_buckets),
 TDN_smooth_x <- seq(5.59, 115.57, length.out = 300)
 TDN_smooth_y <- predict(TDN_exp_fit, newdata = data.frame(Tf_depth_pct_buckets = TDN_smooth_x))
 
-plot(x = (tf_meta$Tf_depth_pct_buckets), y = tf_meta$TDN_mgL,
+plot(x = tf_meta$Tf_depth_pct_buckets, y = tf_meta$TDN_mgL,
      xlim = c(0, 120), ylim = c(0, 42),
      xlab = "Throughfall volume (% of rainfall)",
      ylab = expression(paste("TDN concentration (mg-N L"^"-1",")")))
@@ -292,190 +388,1158 @@ TDN_p_val <- pf(TDN_f_stat, df1 = 1, df2 = 100-2, lower.tail = FALSE)
 
 legend("topright", legend = c(expression(paste("y = 16.81 * e"^"-0.055x","")),
                               expression(paste("r"^"2"," = 0.218")),
-                              expression(paste("p = 9.71 * 10"^"-7",""))),
+                              expression(paste("p<0.0001"))),
        inset = c(-0.4, 0), y.intersp = 0.4,
        col = c("blue", NA, NA), lwd = c(1.5, NA, NA), bty = "n", cex = 0.75)
 text(x=5, y=40, labels = "b", cex = 2)
 #looks good
-#need to add a and b labels to them if using this
 
 
 #then both on one plot
-par(mfrow = c(1, 1))
-par(mar = c(5, 5, 3, 5))
 #start by plotting DOC
-plot(x = (tf_meta$Tf_depth_pct_buckets), y = tf_meta$DOC_mgL,
+pdf("dilution_plot.pdf", width = 8, height = 8)
+par(mfrow = c(1, 1))
+par(mar = c(7, 5, 3, 5))
+plot(x = tf_meta$Tf_depth_pct_buckets, y = tf_meta$DOC_mgL,
      pch = 1, col = "blue",
-     xlim = c(0, 120), ylim = c(0, 140),
-     xlab = "Throughfall volume (% of rainfall)",
-     ylab = expression(paste("DOC concentration (mg-C L"^"-1",")")))
+     xlim = c(0, 120), ylim = c(0, 140), xaxs = "i", yaxs = "i",
+     xlab = "",
+     ylab = "")
+mtext(expression(paste("DOC concentration (mg-C L"^"-1",")")), 
+      side = 2, line = 3, col = "blue")
+pct_axis <- axis(1, labels = FALSE)
+max_depth_mm <- 120 * precip_bucket_avg_mm / 100
+depth_axis_labels <- seq(0, ceiling(max_depth_mm / 10) * 10, by = 10)
+depth_axis <- depth_axis_labels * 100 / precip_bucket_avg_mm
+axis(side = 1, at = depth_axis, labels = depth_axis_labels, line = 3.1)
+mtext("Throughfall depth (% of rainfall)", side = 1, line = 1.9)
+mtext("Throughfall depth (mm)", side = 1, line = 5)
+axis(side = 2, col = "blue", col.axis = "blue")
 lines(DOC_smooth_x, DOC_smooth_y, col = "blue", lwd = 1.5)
 #TDN over it now
 par(new = TRUE)
-plot(x = (tf_meta$Tf_depth_pct_buckets), y = tf_meta$TDN_mgL,
-     pch = 2, col = "red",
+plot(x = tf_meta$Tf_depth_pct_buckets, y = tf_meta$TDN_mgL,
+     pch = 2, col = "red3",
      axes = FALSE, xlab = "", ylab = "",
-     xlim = c(0, 120), ylim = c(0, 42))
-lines(TDN_smooth_x, TDN_smooth_y, col = "red", lwd = 1.5)
-axis(side = 4)
+     xlim = c(0, 120), ylim = c(0, 42), xaxs = "i", yaxs = "i")
+lines(TDN_smooth_x, TDN_smooth_y, col = "red3", lwd = 1.5)
+axis(side = 4, col = "red3", col.axis = "red3")
+segments(x0 = par("usr")[2], y0 = 0, y1 = 42, col = "red3", xpd = TRUE)
 mtext(expression(paste("TDN concentration (mg-N L"^"-1",")")),
-      side = 4, line = 3)
-
+      side = 4, line = 3, col = "red3")
 legend("topright",
-       legend = c(expression(paste("DOC: y = 67.15 * e"^"-0.036x","")),
-                  expression(paste("TDN: y = 16.81 * e"^"-0.055x",""))),
-       inset = c(-0.15, 0),
-       pch = c(1, 2), col = c("blue", "red"),
+       legend = c(expression(paste("[DOC] = 67.15 * e"^"-0.036x","")),
+                  expression(paste("r"^"2"," = 0.217; p<0.0001")),
+                  expression(paste("[TDN] = 16.81 * e"^"-0.055x","")),
+                  expression(paste("r"^"2"," = 0.218; p<0.0001"))),
+       inset = c(0.01, 0.01), y.intersp = c(1.9, 1.5, 1.5, 1.46),
+       pch = c(1, NA, 2, NA), col = c("blue", NA, "red3", NA),
        lwd = 1.5, bty = "n")
+dev.off()
+#this is final dilution curve plot
+
+
+#FTICRMS data
+FTICRMS_raw <- read.csv(file = 'data/ICBM_OCEAN_output.csv')
+#add columns with desired info
+#condensed aromatics
+FTICRMS_raw$Condensed.aromatic <- NA
+FTICRMS_raw$Condensed.aromatic[FTICRMS_raw$AI.mod >= 0.67] <- 1
+FTICRMS_raw$Condensed.aromatic[FTICRMS_raw$AI.mod < 0.67] <- 0
+
+FTICRMS_raw$Condensed.aromatic.O_rich <- NA
+FTICRMS_raw$Condensed.aromatic.O_rich[FTICRMS_raw$Condensed.aromatic == 1 & FTICRMS_raw$Aromatic.O_rich == 1] <- 1
+FTICRMS_raw$Condensed.aromatic.O_rich[FTICRMS_raw$Condensed.aromatic != 1 | FTICRMS_raw$Aromatic.O_rich != 1] <- 0
+
+FTICRMS_raw$Condensed.aromatic.O_poor <- NA
+FTICRMS_raw$Condensed.aromatic.O_poor[FTICRMS_raw$Condensed.aromatic == 1 & FTICRMS_raw$Aromatic.O_poor == 1] <- 1
+FTICRMS_raw$Condensed.aromatic.O_poor[FTICRMS_raw$Condensed.aromatic != 1 | FTICRMS_raw$Aromatic.O_poor != 1] <- 0
+
+#remove condensed from the rest of the aromatics
+FTICRMS_raw$Uncondensed.aromatic <- NA
+FTICRMS_raw$Uncondensed.aromatic[FTICRMS_raw$Condensed.aromatic == 0 & FTICRMS_raw$Aromatic == 1] <- 1
+FTICRMS_raw$Uncondensed.aromatic[FTICRMS_raw$Condensed.aromatic != 0 | FTICRMS_raw$Aromatic != 1] <- 0
+
+FTICRMS_raw$Uncondensed.aromatic.O_rich <- NA
+FTICRMS_raw$Uncondensed.aromatic.O_rich[FTICRMS_raw$Condensed.aromatic.O_rich == 0 & FTICRMS_raw$Aromatic.O_rich == 1] <- 1
+FTICRMS_raw$Uncondensed.aromatic.O_rich[FTICRMS_raw$Condensed.aromatic.O_rich != 0 | FTICRMS_raw$Aromatic.O_rich != 1] <- 0
+
+FTICRMS_raw$Uncondensed.aromatic.O_poor <- NA
+FTICRMS_raw$Uncondensed.aromatic.O_poor[FTICRMS_raw$Condensed.aromatic.O_poor == 0 & FTICRMS_raw$Aromatic.O_poor == 1] <- 1
+FTICRMS_raw$Uncondensed.aromatic.O_poor[FTICRMS_raw$Condensed.aromatic.O_poor != 0 | FTICRMS_raw$Aromatic.O_poor != 1] <- 0
+
+#groupings by elements present
+FTICRMS_raw <- FTICRMS_raw %>%
+  mutate(non_CHO_atoms = rowSums(select(., c(N, S, P))))
+
+FTICRMS_raw$CHO <- NA
+FTICRMS_raw$CHO[FTICRMS_raw$non_CHO_atoms == 0] <- 1
+FTICRMS_raw$CHO[FTICRMS_raw$non_CHO_atoms >0] <- 0
+
+FTICRMS_raw$CHON <- NA
+FTICRMS_raw$CHON[FTICRMS_raw$N > 0 & FTICRMS_raw$S == 0 & FTICRMS_raw$P == 0] <- 1
+FTICRMS_raw$CHON[FTICRMS_raw$N == 0 | FTICRMS_raw$S > 0 | FTICRMS_raw$P > 0] <- 0
+
+FTICRMS_raw$CHOS <- NA
+FTICRMS_raw$CHOS[FTICRMS_raw$S > 0 & FTICRMS_raw$N == 0 & FTICRMS_raw$P == 0] <- 1
+FTICRMS_raw$CHOS[FTICRMS_raw$S == 0 | FTICRMS_raw$N > 0 | FTICRMS_raw$P > 0] <- 0
+
+FTICRMS_raw$CHOP <- NA
+FTICRMS_raw$CHOP[FTICRMS_raw$P > 0 & FTICRMS_raw$S == 0 & FTICRMS_raw$N == 0] <- 1
+FTICRMS_raw$CHOP[FTICRMS_raw$P == 0 | FTICRMS_raw$S > 0 | FTICRMS_raw$N > 0] <- 0
+
+FTICRMS_raw$CHONS <- NA
+FTICRMS_raw$CHONS[FTICRMS_raw$N > 0 & FTICRMS_raw$S > 0 & FTICRMS_raw$P == 0] <- 1
+FTICRMS_raw$CHONS[FTICRMS_raw$N == 0 | FTICRMS_raw$S == 0 | FTICRMS_raw$P > 0] <- 0
+#looks good
+
+#sugar-like and peptide-like
+FTICRMS_raw$sugar.like <- NA
+FTICRMS_raw$sugar.like[FTICRMS_raw$O.C >= 0.9] <- 1
+FTICRMS_raw$sugar.like[FTICRMS_raw$O.C < 0.9] <- 0
+
+FTICRMS_raw$peptide.like <- NA
+FTICRMS_raw$peptide.like[FTICRMS_raw$H.C >= 1.5 & FTICRMS_raw$H.C < 2 &
+                           FTICRMS_raw$O.C < 0.9 & FTICRMS_raw$N > 0] <- 1
+FTICRMS_raw$peptide.like[FTICRMS_raw$H.C < 1.5 | FTICRMS_raw$H.C >= 2 |
+                           FTICRMS_raw$O.C >= 0.9 | FTICRMS_raw$N == 0] <- 0
+
+#zero intensity was read in as NA- replace with 0, just in sample columns
+FTICRMS_no_NA <- FTICRMS_raw %>%
+  mutate(across(57:171, ~replace_na(., 0)))
+
+#remove peaks detected in blanks- potential contaminants
+FTICRMS_no_NA <- FTICRMS_no_NA %>%
+  mutate(blank_detect = rowSums(select(., c(B1, B2, B3, B4, B5, IB1, IB2, IB3, IB4, IB5))))
+FTICRMS_no_blank_peaks <- FTICRMS_no_NA[FTICRMS_no_NA$blank_detect == 0,]
+#looks good, 611 peaks removed, 17094 peaks remain
+
+#remove peaks with non-dominant isotopes- duplicates
+FTICRMS_no_blank_peaks <- FTICRMS_no_blank_peaks %>%
+  mutate(isotopes = rowSums(select(., c(C13, O18, N15, S34))))
+FTICRMS_no_isotopes <- FTICRMS_no_blank_peaks[FTICRMS_no_blank_peaks$isotopes == 0,]
+#looks good, 4644 peaks removed, 12450 peaks remain
+
+#remove peaks with O=0- likely misassignments, would be insoluble
+FTICRMS_positive_O <- FTICRMS_no_isotopes[FTICRMS_no_isotopes$O > 0,]
+#looks good, 48 peaks removed, 12402 peaks remain
+
+#remove peaks w/ systematic misassignment 1
+FTICRMS_positive_O$misassignment_1 <- NA
+FTICRMS_positive_O$misassignment_1[FTICRMS_positive_O$mz > 600 & FTICRMS_positive_O$N >= 2] <- 1
+FTICRMS_positive_O$misassignment_1[FTICRMS_positive_O$mz <= 600 | FTICRMS_positive_O$N < 2] <- 0
+FTICRMS_no_misassignment_1 <- FTICRMS_positive_O[FTICRMS_positive_O$misassignment_1 == 0,]
+#looks good, 1203 peaks removed, 11199 peaks remain
+
+#remove peaks w/ systematic misassignment 2
+FTICRMS_no_misassignment_1$misassignment_2 <- NA
+FTICRMS_no_misassignment_1$misassignment_2[FTICRMS_no_misassignment_1$N >= 1 & FTICRMS_no_misassignment_1$S >= 1 &
+                                             FTICRMS_no_misassignment_1$H.C < 0.75 & FTICRMS_no_misassignment_1$O.C < 0.25] <- 1
+FTICRMS_no_misassignment_1$misassignment_2[FTICRMS_no_misassignment_1$N < 1 | FTICRMS_no_misassignment_1$S < 1 |
+                                             FTICRMS_no_misassignment_1$H.C >= 0.75 | FTICRMS_no_misassignment_1$O.C >= 0.25] <- 0
+FTICRMS_no_misassignment_2 <- FTICRMS_no_misassignment_1[FTICRMS_no_misassignment_1$misassignment_2 == 0,]
+#looks good, 72 peaks removed, 11127 peaks remain
+
+#remove peaks w/ 4 N atoms- likely misassignment
+FTICRMS_no_4N <- FTICRMS_no_misassignment_2[FTICRMS_no_misassignment_2$N < 4,]
+#looks good, 66 peaks removed, 11061 peaks remain
+
+#remove peaks w/ P and another non-CHO atom
+FTICRMS_no_4N$P_and_another <- NA
+FTICRMS_no_4N$P_and_another[FTICRMS_no_4N$P == 1 & FTICRMS_no_4N$non_CHO > 1] <- 1
+FTICRMS_no_4N$P_and_another[FTICRMS_no_4N$P != 1 | FTICRMS_no_4N$non_CHO <= 1] <- 0
+FTICRMS_no_P_and_another <- FTICRMS_no_4N[FTICRMS_no_4N$P_and_another == 0,]
+#looks good, 123 peaks removed, 10938 peaks remain
+
+#remove peaks w/ alternative formula provided
+FTICRMS_no_alt_form <- FTICRMS_no_P_and_another[is.na(FTICRMS_no_P_and_another$alternative_formula),]
+#looks good, 71 peaks removed, 10867 peaks remain
+
+#remove peaks w/ duplicate masses
+#either mz (one peak/measured mass was assigned two different formulae)
+#or reference (two different peaks/measured masses were assigned the same formula)
+FTICRMS_no_alt_form$dup.mass <- 0
+FTICRMS_no_alt_form$dup.mass[duplicated(FTICRMS_no_alt_form$reference) | duplicated(FTICRMS_no_alt_form$reference, fromLast = TRUE) |
+                               duplicated(FTICRMS_no_alt_form$mz) | duplicated(FTICRMS_no_alt_form$mz, fromLast = TRUE)] <- 1
+FTICRMS_no_dupes <- FTICRMS_no_alt_form[FTICRMS_no_alt_form$dup.mass == 0,]
+#looks good, 70 peaks removed, 10797 peaks remain
+#this is final set of 10797 peaks for analysis
+#looks good
+
+#separate metadata from MS intensities
+colnames(FTICRMS_no_dupes)
+peak_meta_new <- FTICRMS_no_dupes[, c(1:17, 22:55, 172:185)]
+#reorder columns
+colnames(peak_meta_new)
+peak_meta_new <- peak_meta_new[, c(1:17, 58:63, 18:24, 52:57, 25:37, 64:65, 38:51)]
+peak_meta_t <- as.data.frame(t(peak_meta_new))
+
+intensities <- FTICRMS_no_dupes[, c(57:61, 67:90, 96:171)]
+rownames(intensities) <- FTICRMS_no_dupes$mz
+
+#normalize intensities
+intens_t <- t(intensities)
+total_intensities <- rowSums(intens_t)
+norm_intens_t_all <- intens_t / total_intensities
+write.csv(norm_intens_t_all, file = 'norm_intens_t_all.csv', row.names = TRUE)
+#this will be used to make sample MS distance matrix
+#and peak based clustering diagram in jmp
+
+#reattach metadata and un-transpose
+colnames(peak_meta_t) <- colnames(norm_intens_t_all)
+FTICRMS_norm_t <- as.data.frame(rbind(peak_meta_t, norm_intens_t_all))
+FTICRMS_norm <- as.data.frame(t(FTICRMS_norm_t))
+FTICRMS <- type.convert(FTICRMS_norm, as.is = TRUE)
+write.csv(FTICRMS, file = 'FTICRMS.csv', row.names = TRUE)
+#this is table S1
+
+#raw van krevelens of individual samples for SI
+H.C_limits <- c(min(FTICRMS$H.C), max(FTICRMS$H.C))
+O.C_limits <- c(min(FTICRMS$O.C), max(FTICRMS$O.C))
+max_norm_intens <- max(FTICRMS[, tf_samples])
+min_norm_intens <- 0.000000001
+for(col in tf_samples) {
+  FTICRMS_pos <- FTICRMS[FTICRMS[[col]] >0, ]
+  scale_min <- min(FTICRMS_pos[[col]])
+  scale_max <- max(FTICRMS_pos[[col]])
+  van_k <- ggplot(FTICRMS_pos, aes(x = O.C, y = H.C,
+                               size = .data[[col]], color = .data[[col]])) +
+    geom_point(alpha = 0.8) +
+    scale_x_continuous(limits = O.C_limits) +
+    scale_y_continuous(limits = H.C_limits) +
+    scale_size_continuous(name = col,
+                          limits = c(scale_min, scale_max),
+                          range = c(0.2, 2),
+                          trans = "log10") +
+    scale_color_distiller(name = col,
+                          palette = "YlGnBu",
+                          direction = 1,
+                          limits = c(scale_min, scale_max),
+                          trans = "log10") +
+    labs(title = paste("van Krevelen", col),
+         x = "O/C", y = "H/C") +
+    theme_bw()
+  assign(paste0("van_krevelen_", col), van_k)
+}
+#fine for now
+#I might like linear scale for size and log for color, but decide later
+#could also be something else for color like molecular class
 
 
 
-#correlations between all numeric variables
-ms_bulk <- read_csv(file = 'data/MS_bulk_parameters.csv')
-ms_bulk_tf <- ms_bulk[-(54:58), ]
-tf_meta_w_ms_bulk <- merge(tf_meta, ms_bulk_tf)
 
-tf_meta_numeric <- tf_meta_w_ms_bulk[sapply(tf_meta_w_ms_bulk, is.numeric)]
-correlations <- cor(tf_meta_numeric, use = "everything")
-write.csv(correlations, "correlations.csv", row.names = TRUE)
-#doing DOC separately since it has NA values
-correlations_DOC <- cor(tf_meta_numeric, use = "complete.obs")
-write.csv(correlations_DOC, "correlations_DOC.csv", row.names = TRUE)
-#testing for significance to report
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$TDN_mgL, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$Molecular.mass_avg, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$N_avg, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$S_avg, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$P_avg, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$Heteroatoms_avg, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$CHO_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$H.C_avg, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$O.C_avg, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$AI_avg, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$AImod_avg, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$DBE_avg, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$Arom_O_poor_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$High_unsat_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$High_unsat_O_rich_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$High_unsat_O_poor_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$Unsat_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$Unsat_O_rich_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$Unsat_O_poor_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$Unsat_with_N_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$Sat_O_rich_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$Sat_O_poor_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$Sugar_like_pct, use = "complete.obs")
-cor.test(tf_meta_numeric$DOC_mgL, tf_meta_numeric$Peptide_like_pct, use = "complete.obs")
+
+#groupings and their averages
+#use transposed version so samples are rows, add metadata
+#extract rows where condition is met, average down all peak columns for those extracted rows
+#make that a new row or separate object with averages for each peak
+MS_w_samp_meta <- cbind(samp_meta, norm_intens_t_all)
+avg_tf_MS <- as.data.frame(colMeans(MS_w_samp_meta[MS_w_samp_meta$Sample_type == "Throughfall", -(1:63)]))
+avg_precip_all_MS <- as.data.frame(colMeans(MS_w_samp_meta[MS_w_samp_meta$Sample_type == "Precipitation", -(1:63)]))
+avg_precip_MS <- as.data.frame(colMeans(MS_w_samp_meta[c("P2", "P3", "P4"), -(1:63)]))
+colnames(avg_precip_MS) <- "precip_avg"
+colnames(avg_precip_all_MS) <- "precip_all_avg"
+colnames(avg_tf_MS) <- "throughfall_avg"
+#these three are the most distinctively rain-like, they separate from throughfall samples based on the db-rda analysis
+#so just these three will be used for calculating enrichment
+
+#enrichment as subtraction of rainwater signal
+avg_precip_105col <- do.call("cbind", replicate(105, avg_precip_MS, simplify = FALSE))
+enrich_sample_subt_wo_meta <- FTICRMS[, 66:170] - avg_precip_105col
+enrich_sample_subt <- cbind(peak_meta_new, enrich_sample_subt_wo_meta)
+write.csv(enrich_sample_subt, file = 'enrich_sample_subt.csv', row.names = TRUE)
+
+#enrichment as division by rainwater signal
+enrich_sample_div_wo_meta <- FTICRMS[, 66:170] / avg_precip_105col
+#zero over a number gives zero (good),
+#a number over 0 gives infinity- I want it to be a number, I'll use the maximum of the non-infinity values in that sample group
+#zero over zero gives NaN- I want it to be zero because it wasn't detected in throughfall samples, so wasn't enriched at all
+enrich_sample_div_wo_meta[is.na(enrich_sample_div_wo_meta)] <- 0
+enrich_sample_div_no_NA <- enrich_sample_div_wo_meta %>%
+  mutate(across(everything(), ~ ifelse(is.infinite(.), max(.[is.finite(.)]), .)))
+enrich_sample_div <- cbind(peak_meta_new, enrich_sample_div_no_NA)
+write.csv(enrich_sample_div, file = 'enrich_sample_div.csv', row.names = TRUE)
+
+#van krevelens
+#average precip
+avg_precip_w_meta <- cbind(peak_meta_new, avg_precip_MS)
+ggplot(data = avg_precip_w_meta[avg_precip_w_meta$precip_avg > 0, ], aes(x = O.C, y = H.C,
+                              size = (precip_avg))) +
+  geom_point() +
+  scale_size(range = c(0.5, 2)) +
+  labs(title = "Rainwater mean") +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.border = element_rect(color = "black", size = 0.5, fill = NA))
+
+#averages by class
+avg_pinopsida_MS <- as.data.frame(colMeans(MS_w_samp_meta[MS_w_samp_meta$Class == "Pinopsida", -(1:63)]))
+avg_dicotyledoneae_MS <- as.data.frame(colMeans(MS_w_samp_meta[MS_w_samp_meta$Class == "Dicotyledoneae", -(1:63)]))
+avg_classes <- cbind(avg_pinopsida_MS, avg_dicotyledoneae_MS)
+colnames(avg_classes) <- c("Pinopsida", "Dicotyledoneae")
+
+#van krevelens of class averages (before doing enrichment)
+MS_classes <- cbind(peak_meta_new, avg_classes)
+plot(x = MS_classes$O.C, y = MS_classes$H.C,
+     pch = 20)
+
+ggplot(data = MS_classes[MS_classes$Pinopsida > 0, ],
+       aes(x = O.C, y = H.C,
+           size = (Pinopsida))) +
+  geom_point() +
+  scale_size(range = c(0.5, 2)) +
+  labs(title = "Class Pinopsida mean") +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.border = element_rect(color = "black", size = 0.5, fill = NA))
+
+ggplot(data = MS_classes[MS_classes$Dicotyledoneae > 0, ],
+       aes(x = O.C, y = H.C,
+           size = (Dicotyledoneae))) +
+  geom_point() +
+  scale_size(range = c(0.5, 2)) +
+  labs(title = "Class Dicotyledoneae mean") +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.border = element_rect(color = "black", size = 0.5, fill = NA))
+
+
+#enrichment by class (relative to rainwater)
+avg_precip_2col <- cbind(avg_precip_MS, avg_precip_MS)
+enrich_class_subt <- avg_classes - avg_precip_2col
+enrich_class_div <- avg_classes / avg_precip_2col
+enrich_class_div[is.na(enrich_class_div)] <- 0
+enrich_class_div$Pinopsida[sapply(enrich_class_div$Pinopsida, is.infinite)] <- 
+  max(enrich_class_div$Pinopsida[sapply(enrich_class_div$Pinopsida, is.finite)])
+enrich_class_div$Dicotyledoneae[sapply(enrich_class_div$Dicotyledoneae, is.infinite)] <- 
+  max(enrich_class_div$Dicotyledoneae[sapply(enrich_class_div$Dicotyledoneae, is.finite)])
+colnames(enrich_class_subt) <- c("Pinopsida_subt", "Dicotyledoneae_subt")
+colnames(enrich_class_div) <- c("Pinopsida_div", "Dicotyledoneae_div")
+enrich_class_w_meta <- cbind(peak_meta_new, avg_classes, enrich_class_subt, enrich_class_div)
+write.csv(enrich_class_w_meta, file = 'enrich_class_w_meta.csv', row.names = TRUE)
+#van krevelens
+ggplot(data = enrich_class_w_meta[enrich_class_w_meta$Pinopsida_subt > 0, ],
+       aes(x = O.C, y = H.C,
+           size = Pinopsida_subt, color = Pinopsida_subt)) +
+  geom_point() +
+  scale_size(range = c(0.5, 2)) +
+  scale_color_distiller(palette = "YlGnBu", direction = 1) +
+  labs(title = "Class Pinopsida enrichment by subtraction") +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.border = element_rect(color = "black", size = 0.5, fill = NA))
+
+ggplot(data = enrich_class_w_meta[enrich_class_w_meta$Pinopsida_div > 1, ],
+       aes(x = O.C, y = H.C,
+           size = Pinopsida_div, color = Pinopsida_div)) +
+  geom_point() +
+  scale_size(range = c(0.5, 2)) +
+  scale_color_distiller(palette = "YlGnBu", direction = 1) +
+  labs(title = "Class Pinopsida enrichment by division") +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.border = element_rect(color = "black", size = 0.5, fill = NA))
+
+ggplot(data = enrich_class_w_meta[enrich_class_w_meta$Dicotyledoneae_subt > 0, ],
+       aes(x = O.C, y = H.C,
+           size = Dicotyledoneae_subt, color = Dicotyledoneae_subt)) +
+  geom_point() +
+  scale_size(range = c(0.5, 2)) +
+  scale_color_distiller(palette = "YlGnBu", direction = 1) +
+  labs(title = "Class Dicotyledoneae enrichment by subtraction") +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.border = element_rect(color = "black", size = 0.5, fill = NA))
+
+ggplot(data = enrich_class_w_meta[enrich_class_w_meta$Dicotyledoneae_div > 1, ],
+       aes(x = O.C, y = H.C,
+           size = Dicotyledoneae_div, color = Dicotyledoneae_div)) +
+  geom_point() +
+  scale_size(range = c(0.5, 2)) +
+  scale_color_distiller(palette = "YlGnBu", direction = 1) +
+  labs(title = "Class Dicotyledoneae enrichment by division") +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.border = element_rect(color = "black", size = 0.5, fill = NA))
+
+
+#averages by order
+avg_orders_t <- MS_w_samp_meta %>%
+  filter(Order != "Precipitation") %>%
+  group_by(Order) %>%
+  summarise(across(-(1:62), ~mean(.)))
+avg_orders <- as.data.frame(t(avg_orders_t[, -1]))
+colnames(avg_orders) <- avg_orders_t$Order
+
+
+#van krevelens of order averages (before doing enrichment)
+MS_orders <- cbind(peak_meta_new, avg_orders)
+ggplot(data = MS_orders[MS_orders$Magnoliales > 0, ],
+       aes(x = O.C, y = H.C,
+           size = (Magnoliales))) +
+  geom_point() +
+  scale_size(range = c(0.5, 2)) +
+  labs(title = "Order Magnoliales mean") +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.border = element_rect(color = "black", size = 0.5, fill = NA))
+
+#enrichment by order
+avg_precip_12col <- do.call("cbind", replicate(12, avg_precip_MS, simplify = FALSE))
+enrich_order_subt <- avg_orders - avg_precip_12col
+enrich_order_div <- avg_orders / avg_precip_12col
+enrich_order_div[is.na(enrich_order_div)] <- 0
+enrich_order_div <- enrich_order_div %>%
+  mutate(across(everything(), ~ ifelse(is.infinite(.), max(.[is.finite(.)]), .)))
+enrich_order_w_meta <- cbind(
+  peak_meta_new,
+  avg_orders %>% rename_with(~ paste0(., "_avg")),
+  enrich_order_subt %>% rename_with(~ paste0(., "_subt")),
+  enrich_order_div %>% rename_with(~ paste0(., "_div")))
+write.csv(enrich_order_w_meta, file = 'enrich_order_w_meta.csv', row.names = TRUE)
+
+#van krevelens
+ggplot(data = enrich_order_w_meta[enrich_order_w_meta$Magnoliales_subt > 0, ],
+       aes(x = O.C, y = H.C,
+           size = Magnoliales_subt, color = Magnoliales_subt)) +
+  geom_point() +
+  scale_size(range = c(0.5, 2)) +
+  scale_color_distiller(palette = "YlGnBu", direction = 1) +
+  labs(title = "Order Magnoliales enrichment by subtraction") +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.border = element_rect(color = "black", size = 0.5, fill = NA))
+
+ggplot(data = enrich_order_w_meta[enrich_order_w_meta$Magnoliales_div > 1, ],
+       aes(x = O.C, y = H.C,
+           size = Magnoliales_div, color = Magnoliales_div)) +
+  geom_point() +
+  scale_size(range = c(0.5, 2)) +
+  scale_color_distiller(palette = "YlGnBu", direction = 1) +
+  labs(title = "Order Magnoliales enrichment by division") +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.border = element_rect(color = "black", size = 0.5, fill = NA))
+
+#averages by family
+avg_families_t <- MS_w_samp_meta %>%
+  filter(Family != "Precipitation") %>%
+  group_by(Family) %>%
+  summarise(across(-(1:62), ~mean(.)))
+avg_families <- as.data.frame(t(avg_families_t[, -1]))
+colnames(avg_families) <- avg_families_t$Family
+
+#van krevelens of family averages
+
+#enrichment by family
+avg_precip_16col <- do.call("cbind", replicate(16, avg_precip_MS, simplify = FALSE))
+enrich_family_subt <- avg_families - avg_precip_16col
+enrich_family_div <- avg_families / avg_precip_16col
+enrich_family_div[is.na(enrich_family_div)] <- 0
+enrich_family_div <- enrich_family_div %>%
+  mutate(across(everything(), ~ ifelse(is.infinite(.), max(.[is.finite(.)]), .)))
+enrich_family_w_meta <- cbind(
+  peak_meta_new,
+  avg_families %>% rename_with(~ paste0(., "_avg")),
+  enrich_family_subt %>% rename_with(~ paste0(., "_subt")),
+  enrich_family_div %>% rename_with(~ paste0(., "_div")))
+write.csv(enrich_family_w_meta, file = 'enrich_family_w_meta.csv', row.names = TRUE)
+
+
+#averages by genus
+avg_genera_t <- MS_w_samp_meta %>%
+  filter(Genus != "Precipitation") %>%
+  group_by(Genus) %>%
+  summarise(across(-(1:62), ~mean(.)))
+avg_genera <- as.data.frame(t(avg_genera_t[, -1]))
+colnames(avg_genera) <- avg_genera_t$Genus
+
+#van krevelens of genus averages
+
+#enrichment by genus
+avg_precip_24col <- do.call("cbind", replicate(24, avg_precip_MS, simplify = FALSE))
+enrich_genus_subt <- avg_genera - avg_precip_24col
+enrich_genus_div <- avg_genera / avg_precip_24col
+enrich_genus_div[is.na(enrich_genus_div)] <- 0
+enrich_genus_div <- enrich_genus_div %>%
+  mutate(across(everything(), ~ ifelse(is.infinite(.), max(.[is.finite(.)]), .)))
+enrich_genus_w_meta <- cbind(
+  peak_meta_new,
+  avg_genera %>% rename_with(~ paste0(., "_avg")),
+  enrich_genus_subt %>% rename_with(~ paste0(., "_subt")),
+  enrich_genus_div %>% rename_with(~ paste0(., "_div")))
+write.csv(enrich_genus_w_meta, file = 'enrich_genus_w_meta.csv', row.names = TRUE)
+
+
+#averages by species
+avg_species_t <- MS_w_samp_meta %>%
+  filter(Species != "Precipitation") %>%
+  group_by(Species) %>%
+  summarise(across(-(1:62), ~mean(.)))
+avg_species <- as.data.frame(t(avg_species_t[, -1]))
+colnames(avg_species) <- avg_species_t$Species
+
+#van krevelens of species averages
+
+
+#enrichment by species
+avg_precip_36col <- do.call("cbind", replicate(36, avg_precip_MS, simplify = FALSE))
+enrich_species_subt <- avg_species - avg_precip_36col
+enrich_species_div <- avg_species / avg_precip_36col
+enrich_species_div[is.na(enrich_species_div)] <- 0
+enrich_species_div <- enrich_species_div %>%
+  mutate(across(everything(), ~ ifelse(is.infinite(.), max(.[is.finite(.)]), .)))
+enrich_species_w_meta <- cbind(
+  peak_meta_new,
+  avg_species %>% rename_with(~ paste0(., "_avg")),
+  enrich_species_subt %>% rename_with(~ paste0(., "_subt")),
+  enrich_species_div %>% rename_with(~ paste0(., "_div")))
+write.csv(enrich_species_w_meta, file = 'enrich_species_w_meta.csv', row.names = TRUE)
+write.csv(avg_classes, file = 'avg_classes.csv', row.names = TRUE)
+write.csv(avg_orders, file = 'avg_orders.csv', row.names = TRUE)
+#these are used to make van Krevelens in Figure 3
+
+#make Table 1 here
+
+
+#number of formulae in different sample groups
+table(sign(avg_precip_all_MS$precip_all_avg))
+table(sign(avg_tf_MS$throughfall_avg))
+
+MS_w_samp_meta$formula_counts <- rowSums(MS_w_samp_meta[, -(1:63)] > 0)
+plot(x = MS_w_samp_meta$DOC_mgL, y = MS_w_samp_meta$formula_counts)
+cor(MS_w_samp_meta$DOC_mgL, MS_w_samp_meta$formula_counts, use = "complete.obs")
+cor.test(MS_w_samp_meta$DOC_mgL, MS_w_samp_meta$formula_counts, use = "complete.obs", method = "pearson")
+cor.test(MS_w_samp_meta$DOC_mgL, MS_w_samp_meta$formula_counts, use = "complete.obs", method = "kendall")
+cor.test(MS_w_samp_meta$DOC_mgL, MS_w_samp_meta$formula_counts, use = "complete.obs", method = "spearman")
+cor(MS_w_samp_meta$DOCflux_mg_m2, MS_w_samp_meta$formula_counts, use = "complete.obs")
+cor.test(MS_w_samp_meta$DOCflux_mg_m2, MS_w_samp_meta$formula_counts, use = "complete.obs", method = "pearson")
+cor.test(MS_w_samp_meta$DOCflux_mg_m2, MS_w_samp_meta$formula_counts, use = "complete.obs", method = "kendall")
+cor.test(MS_w_samp_meta$DOCflux_mg_m2, MS_w_samp_meta$formula_counts, use = "complete.obs", method = "spearman")
+#linear correlations between DOC and formula counts are not significant
+#but kendall and spearman are significant
+
+mean(MS_w_samp_meta$formula_counts[MS_w_samp_meta$Sample_type == "Precipitation"])
+std.error(MS_w_samp_meta$formula_counts[MS_w_samp_meta$Sample_type == "Precipitation"])
+min(MS_w_samp_meta$formula_counts[MS_w_samp_meta$Sample_type == "Precipitation"])
+max(MS_w_samp_meta$formula_counts[MS_w_samp_meta$Sample_type == "Precipitation"])
+
+mean(MS_w_samp_meta$formula_counts[MS_w_samp_meta$Sample_type == "Throughfall"])
+std.error(MS_w_samp_meta$formula_counts[MS_w_samp_meta$Sample_type == "Throughfall"])
+min(MS_w_samp_meta$formula_counts[MS_w_samp_meta$Sample_type == "Throughfall"])
+max(MS_w_samp_meta$formula_counts[MS_w_samp_meta$Sample_type == "Throughfall"])
+MS_w_samp_meta$formula_counts[MS_w_samp_meta$formula_counts < 2978.6 & MS_w_samp_meta$Sample_type == "Throughfall"]
+MS_w_samp_meta$formula_counts[MS_w_samp_meta$formula_counts < 3968 & MS_w_samp_meta$Sample_type == "Throughfall"]
+
+avg_formulae_by_species <- MS_w_samp_meta %>%
+  filter(Sample_type == "Throughfall") %>%
+  group_by(Species) %>%
+  summarise(
+    n = n(),
+    mean = mean(formula_counts),
+    std_error = ifelse(n > 1, sd(formula_counts) / sqrt(n), NA)
+  )
+print(avg_formulae_by_species, n = 36)
+min(avg_formulae_by_species$mean)
+max(avg_formulae_by_species$mean)
+
+grouped_formulae_by_species <- colSums(avg_species > 0)
+grouped_formulae_by_species
+min(grouped_formulae_by_species)
+max(grouped_formulae_by_species)
+mean(grouped_formulae_by_species)
+std.error(grouped_formulae_by_species)
+grouped_formulae_by_species[grouped_formulae_by_species<4979]
+
+#test if condensed aromatics are large molecules
+set.seed(0)
+t.test(FTICRMS$reference[FTICRMS$Condensed.aromatic == 1],
+       FTICRMS$reference[FTICRMS$Condensed.aromatic == 0])
+set.seed(0)
+t.test(FTICRMS$reference[FTICRMS$Condensed.aromatic == 1],
+       FTICRMS$reference[FTICRMS$Condensed.aromatic == 0 & FTICRMS$Aromatic == 1])
+#no, they're actually smaller than average and smaller than other aromatics
+
+
+
+#calculate % of intensity in each molecular class for each sample
+pct.cond.arom <- FTICRMS %>%
+  filter(Condensed.aromatic == 1) %>%
+  summarise(across(66:170, sum))
+pct.cond.arom.O.rich <- FTICRMS %>%
+  filter(Condensed.aromatic.O_rich == 1) %>%
+  summarise(across(66:170, sum))
+pct.cond.arom.O.poor <- FTICRMS %>%
+  filter(Condensed.aromatic.O_poor == 1) %>%
+  summarise(across(66:170, sum))
+pct.uncond.arom <- FTICRMS %>%
+  filter(Uncondensed.aromatic == 1) %>%
+  summarise(across(66:170, sum))
+pct.uncond.arom.O.rich <- FTICRMS %>%
+  filter(Uncondensed.aromatic.O_rich == 1) %>%
+  summarise(across(66:170, sum))
+pct.uncond.arom.O.poor <- FTICRMS %>%
+  filter(Uncondensed.aromatic.O_poor == 1) %>%
+  summarise(across(66:170, sum))
+pct.arom <- FTICRMS %>%
+  filter(Aromatic == 1) %>%
+  summarise(across(66:170, sum))
+pct.arom.O.rich <- FTICRMS %>%
+  filter(Aromatic.O_rich == 1) %>%
+  summarise(across(66:170, sum))
+pct.arom.O.poor <- FTICRMS %>%
+  filter(Aromatic.O_poor == 1) %>%
+  summarise(across(66:170, sum))
+pct.high.unsat <- FTICRMS %>%
+  filter(Highly.unsaturated == 1) %>%
+  summarise(across(66:170, sum))
+pct.high.unsat.O.rich <- FTICRMS %>%
+  filter(Highly.unsaturated.O_rich == 1) %>%
+  summarise(across(66:170, sum))
+pct.high.unsat.O.poor <- FTICRMS %>%
+  filter(Highly.unsaturated.O_poor == 1) %>%
+  summarise(across(66:170, sum))
+pct.unsat <- FTICRMS %>%
+  filter(Unsaturated == 1) %>%
+  summarise(across(66:170, sum))
+pct.unsat.O.rich <- FTICRMS %>%
+  filter(Unsaturated.O_rich == 1) %>%
+  summarise(across(66:170, sum))
+pct.unsat.O.poor <- FTICRMS %>%
+  filter(Unsaturated.O_poor == 1) %>%
+  summarise(across(66:170, sum))
+pct.unsat.with.N <- FTICRMS %>%
+  filter(Unsaturated.with.N == 1) %>%
+  summarise(across(66:170, sum))
+pct.saturated <- FTICRMS %>%
+  filter(Saturated == 1) %>%
+  summarise(across(66:170, sum))
+pct.saturated.O.rich <- FTICRMS %>%
+  filter(Saturated.O_rich == 1) %>%
+  summarise(across(66:170, sum))
+pct.saturated.O.poor <- FTICRMS %>%
+  filter(Saturated.O_poor == 1) %>%
+  summarise(across(66:170, sum))
+pct.sugar.like <- FTICRMS %>%
+  filter(sugar.like == 1) %>%
+  summarise(across(66:170, sum))
+pct.peptide.like <- FTICRMS %>%
+  filter(peptide.like == 1) %>%
+  summarise(across(66:170, sum))
+pct.O.rich <- FTICRMS %>%
+  filter(O.C > 0.5) %>%
+  summarise(across(66:170, sum))
+pct.O.poor <- FTICRMS %>%
+  filter(O.C <= 0.5) %>%
+  summarise(across(66:170, sum))
+
+pct.CHO <- FTICRMS %>%
+  filter(CHO == 1) %>%
+  summarise(across(66:170, sum))
+pct.CHON <- FTICRMS %>%
+  filter(CHON == 1) %>%
+  summarise(across(66:170, sum))
+pct.CHOS <- FTICRMS %>%
+  filter(CHOS == 1) %>%
+  summarise(across(66:170, sum))
+pct.CHOP <- FTICRMS %>%
+  filter(CHOP == 1) %>%
+  summarise(across(66:170, sum))
+pct.CHONS <- FTICRMS %>%
+  filter(CHONS == 1) %>%
+  summarise(across(66:170, sum))
+
+mean.MW <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * reference)))
+mean.H.C <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * H.C)))
+mean.O.C <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * O.C)))
+mean.AI <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * AI)))
+mean.AI.mod <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * AI.mod)))
+mean.DBE <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * DBE)))
+
+mean.C <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * C)))
+mean.H <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * H)))
+mean.O <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * O)))
+mean.N <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * N)))
+mean.S <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * S)))
+mean.P <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * P)))
+mean.non.CHO.atoms <- FTICRMS %>%
+  summarise(across(66:170, ~ sum(. * non_CHO_atoms)))
+mean.N.C <- mean.N / mean.C
+mean.S.C <- mean.S / mean.C
+mean.P.C <- mean.P / mean.C
+
+#combine into one data frame
+FTICRMS_means <- rbind(mean.MW, mean.H.C, mean.O.C, mean.AI, mean.AI.mod, mean.DBE,
+                          mean.C, mean.H, mean.O, mean.N, mean.S, mean.P,
+                          mean.non.CHO.atoms, mean.N.C, mean.S.C, mean.P.C,
+                          pct.CHO, pct.CHON, pct.CHOS, pct.CHOP, pct.CHONS,
+                          pct.cond.arom, pct.cond.arom.O.rich, pct.cond.arom.O.poor,
+                          pct.uncond.arom, pct.uncond.arom.O.rich, pct.uncond.arom.O.poor,
+                          pct.arom, pct.arom.O.rich, pct.arom.O.poor,
+                          pct.high.unsat, pct.high.unsat.O.rich, pct.high.unsat.O.poor,
+                          pct.unsat, pct.unsat.O.rich, pct.unsat.O.poor, pct.unsat.with.N,
+                          pct.saturated, pct.saturated.O.rich, pct.saturated.O.poor,
+                          pct.sugar.like, pct.peptide.like, pct.O.rich, pct.O.poor)
+chemical_parameters <- c("mean.MW", "mean.H.C", "mean.O.C", "mean.AI", "mean.AI.mod", "mean.DBE",
+                         "mean.C", "mean.H", "mean.O", "mean.N", "mean.S", "mean.P",
+                         "mean.non.CHO.atoms", "mean.N.C", "mean.S.C", "mean.P.C",
+                         "pct.CHO", "pct.CHON", "pct.CHOS", "pct.CHOP", "pct.CHONS",
+                         "pct.cond.arom", "pct.cond.arom.O.rich", "pct.cond.arom.O.poor",
+                         "pct.uncond.arom", "pct.uncond.arom.O.rich", "pct.uncond.arom.O.poor",
+                         "pct.arom", "pct.arom.O.rich", "pct.arom.O.poor",
+                         "pct.high.unsat", "pct.high.unsat.O.rich", "pct.high.unsat.O.poor",
+                         "pct.unsat", "pct.unsat.O.rich", "pct.unsat.O.poor", "pct.unsat.with.N",
+                         "pct.saturated", "pct.saturated.O.rich", "pct.saturated.O.poor",
+                         "pct.sugar.like", "pct.peptide.like", "pct.O.rich", "pct.O.poor")
+rownames(FTICRMS_means) <- chemical_parameters
+#looks good
+
+#also want standard deviations for SI table- for ones where that's applicable
+#which are ones that calculate mean value instead of % of intensity in a category
+weighted_se <- function(x, w) {
+  weighted_mean <- sum(w * x)
+  weighted_var <- sum(w * (x - weighted_mean)^2)
+  sqrt(weighted_var) / sqrt(length(x))
+}
+
+se.MW <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(reference, .)))
+se.H.C <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(H.C, .)))
+se.O.C <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(O.C, .)))
+se.AI <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(AI, .)))
+se.AI.mod <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(AI.mod, .)))
+se.DBE <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(DBE, .)))
+
+se.C <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(C, .)))
+se.H <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(H, .)))
+se.O <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(O, .)))
+se.N <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(N, .)))
+se.S <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(S, .)))
+se.P <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(P, .)))
+se.non.CHO.atoms <- FTICRMS %>%
+  summarise(across(66:170, ~ weighted_se(non_CHO_atoms, .)))
+
+FTICRMS_means_and_SEs <- rbind(mean.MW, se.MW, mean.H.C, se.H.C, mean.O.C, se.O.C,
+                              mean.AI, se.AI, mean.AI.mod, se.AI.mod, mean.DBE, se.DBE,
+                              mean.C, se.C, mean.H, se.H, mean.O, se.O,
+                              mean.N, se.N, mean.S, se.S, mean.P, se.P,
+                              mean.non.CHO.atoms, se.non.CHO.atoms, mean.N.C, mean.S.C, mean.P.C,
+                              pct.CHO, pct.CHON, pct.CHOS, pct.CHOP, pct.CHONS,
+                              pct.cond.arom, pct.cond.arom.O.rich, pct.cond.arom.O.poor,
+                              pct.uncond.arom, pct.uncond.arom.O.rich, pct.uncond.arom.O.poor,
+                              pct.arom, pct.arom.O.rich, pct.arom.O.poor,
+                              pct.high.unsat, pct.high.unsat.O.rich, pct.high.unsat.O.poor,
+                              pct.unsat, pct.unsat.O.rich, pct.unsat.O.poor, pct.unsat.with.N,
+                              pct.saturated, pct.saturated.O.rich, pct.saturated.O.poor,
+                              pct.sugar.like, pct.peptide.like, pct.O.rich, pct.O.poor)
+rownames(FTICRMS_means_and_SEs) <- c("mean.MW", "se.MW", "mean.H.C", "se.H.C", "mean.O.C", "se.O.C",
+                                     "mean.AI", "se.AI", "mean.AI.mod", "se.AI.mod", "mean.DBE", "se.DBE",
+                                     "mean.C", "se.C", "mean.H", "se.H", "mean.O", "se.O",
+                                     "mean.N", "se.N", "mean.S", "se.S", "mean.P", "se.P",
+                                     "mean.non.CHO.atoms", "se.non.CHO.atoms", "mean.N.C", "mean.S.C", "mean.P.C",
+                                     "pct.CHO", "pct.CHON", "pct.CHOS", "pct.CHOP", "pct.CHONS",
+                                     "pct.cond.arom", "pct.cond.arom.O.rich", "pct.cond.arom.O.poor",
+                                     "pct.uncond.arom", "pct.uncond.arom.O.rich", "pct.uncond.arom.O.poor",
+                                     "pct.arom", "pct.arom.O.rich", "pct.arom.O.poor",
+                                     "pct.high.unsat", "pct.high.unsat.O.rich", "pct.high.unsat.O.poor",
+                                     "pct.unsat", "pct.unsat.O.rich", "pct.unsat.O.poor", "pct.unsat.with.N",
+                                     "pct.saturated", "pct.saturated.O.rich", "pct.saturated.O.poor",
+                                     "pct.sugar.like", "pct.peptide.like", "pct.O.rich", "pct.O.poor")
+bulk_all <- as.data.frame(t(FTICRMS_means_and_SEs))
+bulk_all <- bulk_all[c(54:58, 1:53, 59:105),]
+write.csv(bulk_all, file = 'bulk_parameters_all_samples.csv', row.names = TRUE)
+
+
+#report parameters by sample before grouping
+sample_stats_tf <- function(row) {
+  x <- unlist(FTICRMS_means[row, -(54:58)])
+  data.frame(
+    min = min(x),
+    max = max(x),
+    mean = mean(x),
+    std_error = std.error(x)
+  )
+}
+sample_stats_tf_results <- do.call(rbind, lapply(1:44, sample_stats_tf))
+rownames(sample_stats_tf_results) <- chemical_parameters
+sample_stats_tf_results
+
+sample_stats_precip <- function(row) {
+  x <- unlist(FTICRMS_means[row, 54:58])
+  data.frame(
+    min = min(x),
+    max = max(x),
+    mean = mean(x),
+    std_error = std.error(x)
+  )
+}
+sample_stats_precip_results <- do.call(rbind, lapply(1:44, sample_stats_precip))
+rownames(sample_stats_precip_results) <- chemical_parameters
+sample_stats_precip_results
+
+#tests for significant differences between throughfall and precipitation
+sample_stats_t_test <- apply(FTICRMS_means, 1, function(row) {
+  tf <- as.numeric(row[-(54:58)])
+  precip <- as.numeric(row[54:58])
+  test <- t.test(tf, precip)
+  data.frame(
+    p_value = test$p.value,
+    t_stat = test$statistic,
+    mean_tf = test$estimate[1],
+    mean_precip = test$estimate[2]
+  )
+})
+sample_stats_t_test_results <- do.call(rbind, sample_stats_t_test)
+
+
+#add metadata for groupings
+FTICRMS_means_t <- as.data.frame(t(FTICRMS_means))
+means_w_samp_meta <- cbind(samp_meta, FTICRMS_means_t)
+write.csv(means_w_samp_meta, file = 'means_w_samp_meta.csv', row.names = FALSE)
+#this is used to make clustering heatmap in jmp
+
+#groupings- averages and st errors by species, genus, etc.
+bulk_avgs_class <- means_w_samp_meta %>%
+  group_by(Class) %>%
+  summarise(across(all_of(chemical_parameters),
+                   list(mean = ~mean(.),
+                        se = ~sd(.) / sqrt(sum(!is.na(.))))))
+bulk_avgs_class <- as.data.frame(bulk_avgs_class)
+bulk_avgs_order <- means_w_samp_meta %>%
+  group_by(Order) %>%
+  summarise(across(all_of(chemical_parameters),
+                   list(mean = ~mean(.),
+                        se = ~sd(.) / sqrt(sum(!is.na(.))))))
+bulk_avgs_order <- as.data.frame(bulk_avgs_order)
+bulk_avgs_family <- means_w_samp_meta %>%
+  group_by(Family) %>%
+  summarise(across(all_of(chemical_parameters),
+                   list(mean = ~mean(.),
+                        se = ~sd(.) / sqrt(sum(!is.na(.))))))
+bulk_avgs_family <- as.data.frame(bulk_avgs_family)
+bulk_avgs_genus <- means_w_samp_meta %>%
+  group_by(Genus) %>%
+  summarise(across(all_of(chemical_parameters),
+                   list(mean = ~mean(.),
+                        se = ~sd(.) / sqrt(sum(!is.na(.))))))
+bulk_avgs_genus <- as.data.frame(bulk_avgs_genus)
+bulk_avgs_species <- means_w_samp_meta %>%
+  group_by(Species) %>%
+  summarise(across(all_of(chemical_parameters),
+                   list(mean = ~mean(.),
+                        se = ~sd(.) / sqrt(sum(!is.na(.))))))
+bulk_avgs_species <- as.data.frame(bulk_avgs_species)
+bulk_avgs_all_tf <- means_w_samp_meta %>%
+  filter(Sample_type == "Throughfall") %>%
+  summarise(across(all_of(chemical_parameters),
+                   list(mean = ~mean(.),
+                        se = ~sd(.) / sqrt(sum(!is.na(.))))))
+bulk_avgs_precip <- means_w_samp_meta %>%
+  filter(Sample_type == "Precipitation") %>%
+  summarise(across(all_of(chemical_parameters),
+                   list(mean = ~mean(.),
+                        se = ~sd(.) / sqrt(sum(!is.na(.))))))
+write.csv(bulk_avgs_class, file = 'bulk_avgs_class.csv')
+write.csv(bulk_avgs_order, file = 'bulk_avgs_order.csv')
+write.csv(bulk_avgs_family, file = 'bulk_avgs_family.csv')
+write.csv(bulk_avgs_genus, file = 'bulk_avgs_genus.csv')
+write.csv(bulk_avgs_species, file = 'bulk_avgs_species.csv')
+write.csv(bulk_avgs_all_tf, file = 'bulk_avgs_all_tf.csv')
+write.csv(bulk_avgs_precip, file = 'bulk_avgs_precip.csv')
+#species, all_tf, and precip are the data in Table 1
+#and all of these go into Table S1
+
+#want enrichment file of everything to export too
+rownames(bulk_avgs_class) <- bulk_avgs_class[, 1]
+rownames(bulk_avgs_order) <- bulk_avgs_order[, 1]
+rownames(bulk_avgs_family) <- bulk_avgs_family[, 1]
+rownames(bulk_avgs_genus) <- bulk_avgs_genus[, 1]
+rownames(bulk_avgs_species) <- bulk_avgs_species[, 1]
+bulk_avgs_combined <- rbind(bulk_avgs_class[, -1], bulk_avgs_order[, -1], bulk_avgs_family[, -1], bulk_avgs_genus[, -1], bulk_avgs_species[, -1])
+bulk_avgs_all_tf_95row <- do.call("rbind", replicate(95, bulk_avgs_all_tf, simplify = FALSE))
+bulk_avgs_enrich <- bulk_avgs_combined - bulk_avgs_all_tf_95row
+bulk_avgs_pct_enrich <- bulk_avgs_enrich / bulk_avgs_all_tf_95row
+write.csv(bulk_avgs_pct_enrich, file = 'bulk_avgs_pct_enrich.csv', row.names = TRUE)
+#also want tf average, precip average, and species averages for SI
+SI_table_species_bulk <- rbind(bulk_avgs_all_tf, bulk_avgs_precip, bulk_avgs_species[-7, -1])
+write.csv(SI_table_species_bulk, file = 'SI_table_species_bulk.csv')
+
+#test if conifers vs broadleaves have different properties
+set.seed(0)
+t.test(means_w_samp_meta$mean.N.C[means_w_samp_meta$Class == "Pinopsida"],
+       means_w_samp_meta$mean.N.C[means_w_samp_meta$Class == "Dicotyledoneae"])
+mean(means_w_samp_meta$mean.N.C[means_w_samp_meta$Class == "Pinopsida"])
+std.error(means_w_samp_meta$mean.N.C[means_w_samp_meta$Class == "Pinopsida"])
+mean(means_w_samp_meta$mean.N.C[means_w_samp_meta$Class == "Dicotyledoneae"])
+std.error(means_w_samp_meta$mean.N.C[means_w_samp_meta$Class == "Dicotyledoneae"])
 
 set.seed(0)
-t.test(tf_meta_w_ms_bulk$Molecular.mass_avg[tf_meta$Class == "Pinopsida"],
-       tf_meta_w_ms_bulk$Molecular.mass_avg[tf_meta$Class == "Dicotyledoneae"])
+t.test(means_w_samp_meta$mean.S.C[means_w_samp_meta$Class == "Pinopsida"],
+       means_w_samp_meta$mean.S.C[means_w_samp_meta$Class == "Dicotyledoneae"])
+mean(means_w_samp_meta$mean.S.C[means_w_samp_meta$Class == "Pinopsida"])
+std.error(means_w_samp_meta$mean.S.C[means_w_samp_meta$Class == "Pinopsida"])
+mean(means_w_samp_meta$mean.S.C[means_w_samp_meta$Class == "Dicotyledoneae"])
+std.error(means_w_samp_meta$mean.S.C[means_w_samp_meta$Class == "Dicotyledoneae"])
 
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Molecular.mass_avg)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$N_avg)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$S_avg)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$P_avg)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Heteroatoms_avg)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$CHO_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$H.C_avg)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$O.C_avg)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$AI_avg)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$AImod_avg)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$DBE_avg)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Cond_arom_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Arom_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Arom_O_rich_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Arom_O_poor_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$High_unsat_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$High_unsat_O_rich_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$High_unsat_O_poor_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Unsat_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Unsat_O_rich_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Unsat_O_poor_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Unsat_with_N_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Sat_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Sat_O_rich_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Sat_O_poor_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Sugar_like_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$Peptide_like_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$CHON_pct)
-cor.test(tf_meta_numeric$TDN_mgL, tf_meta_numeric$CHONS_pct)
-cor.test(tf_meta_numeric$N_avg, tf_meta_numeric$S_avg)
+set.seed(0)
+t.test(means_w_samp_meta$mean.P.C[means_w_samp_meta$Class == "Pinopsida"],
+       means_w_samp_meta$mean.P.C[means_w_samp_meta$Class == "Dicotyledoneae"])
+mean(means_w_samp_meta$mean.P.C[means_w_samp_meta$Class == "Pinopsida"])
+std.error(means_w_samp_meta$mean.P.C[means_w_samp_meta$Class == "Pinopsida"])
+mean(means_w_samp_meta$mean.P.C[means_w_samp_meta$Class == "Dicotyledoneae"])
+std.error(means_w_samp_meta$mean.P.C[means_w_samp_meta$Class == "Dicotyledoneae"])
 
-# FTICRMS data# FTICRMS data# FTICRMS data
-peak_meta <- read.csv(file = 'data/peak_metadata.csv')
-#if want to do peak filtering, do it here
-#add condensed aromatic rows
-peak_meta$Condensed.aromatic <- NA
-peak_meta$Condensed.aromatic[peak_meta$AI.mod > 0.67] <- 1
-peak_meta$Condensed.aromatic[peak_meta$AI.mod <= 0.67] <- 0
+set.seed(0)
+t.test(means_w_samp_meta$mean.MW[means_w_samp_meta$Class == "Pinopsida"],
+       means_w_samp_meta$mean.MW[means_w_samp_meta$Class == "Dicotyledoneae"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.H.C[means_w_samp_meta$Class == "Pinopsida"],
+       means_w_samp_meta$mean.H.C[means_w_samp_meta$Class == "Dicotyledoneae"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.O.C[means_w_samp_meta$Class == "Pinopsida"],
+       means_w_samp_meta$mean.O.C[means_w_samp_meta$Class == "Dicotyledoneae"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.AI.mod[means_w_samp_meta$Class == "Pinopsida"],
+       means_w_samp_meta$mean.AI.mod[means_w_samp_meta$Class == "Dicotyledoneae"])
 
-peak_meta$Condensed.aromatic.O_rich <- NA
-peak_meta$Condensed.aromatic.O_rich[peak_meta$Condensed.aromatic == 1 & peak_meta$Aromatic.O_rich == 1] <- 1
-peak_meta$Condensed.aromatic.O_rich[peak_meta$Condensed.aromatic != 1 | peak_meta$Aromatic.O_rich != 1] <- 0
+#test if only deciduous conifer species is different from other conifers
+set.seed(0)
+t.test(means_w_samp_meta$mean.N.C[means_w_samp_meta$Species == "glyptostroboides"],
+       means_w_samp_meta$mean.N.C[means_w_samp_meta$Class == "Pinopsida" & means_w_samp_meta$Species != "glyptostroboides"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.N[means_w_samp_meta$Species == "glyptostroboides"],
+       means_w_samp_meta$mean.N[means_w_samp_meta$Class == "Pinopsida" & means_w_samp_meta$Species != "glyptostroboides"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.P.C[means_w_samp_meta$Species == "glyptostroboides"],
+       means_w_samp_meta$mean.P.C[means_w_samp_meta$Class == "Pinopsida" & means_w_samp_meta$Species != "glyptostroboides"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.P[means_w_samp_meta$Species == "glyptostroboides"],
+       means_w_samp_meta$mean.P[means_w_samp_meta$Class == "Pinopsida" & means_w_samp_meta$Species != "glyptostroboides"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.S.C[means_w_samp_meta$Species == "glyptostroboides"],
+       means_w_samp_meta$mean.S.C[means_w_samp_meta$Class == "Pinopsida" & means_w_samp_meta$Species != "glyptostroboides"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.S[means_w_samp_meta$Species == "glyptostroboides"],
+       means_w_samp_meta$mean.S[means_w_samp_meta$Class == "Pinopsida" & means_w_samp_meta$Species != "glyptostroboides"])
+set.seed(0)
+t.test(tf_meta$DOC.TDN_ratio[tf_meta$Species == "glyptostroboides"],
+       tf_meta$DOC.TDN_ratio[tf_meta$Class == "Pinopsida" & tf_meta$Species != "glyptostroboides"])
+set.seed(0)
+t.test(tf_meta$TDN_mgL[tf_meta$Species == "glyptostroboides"],
+       tf_meta$TDN_mgL[tf_meta$Class == "Pinopsida" & tf_meta$Species != "glyptostroboides"])
+set.seed(0)
+t.test(tf_meta$DOC_mgL[tf_meta$Species == "glyptostroboides"],
+       tf_meta$DOC_mgL[tf_meta$Class == "Pinopsida" & tf_meta$Species != "glyptostroboides"])
 
-peak_meta$Condensed.aromatic.O_poor <- NA
-peak_meta$Condensed.aromatic.O_poor[peak_meta$Condensed.aromatic == 1 & peak_meta$Aromatic.O_poor == 1] <- 1
-peak_meta$Condensed.aromatic.O_poor[peak_meta$Condensed.aromatic != 1 | peak_meta$Aromatic.O_poor != 1] <- 0
+#or if only evergreen broadleaf species is different from other broadleaves
+set.seed(0)
+t.test(means_w_samp_meta$mean.N.C[means_w_samp_meta$Species == "opaca"],
+       means_w_samp_meta$mean.N.C[means_w_samp_meta$Class == "Dicotyledoneae" & means_w_samp_meta$Species != "opaca"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.N[means_w_samp_meta$Species == "opaca"],
+       means_w_samp_meta$mean.N[means_w_samp_meta$Class == "Dicotyledoneae" & means_w_samp_meta$Species != "opaca"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.P.C[means_w_samp_meta$Species == "opaca"],
+       means_w_samp_meta$mean.P.C[means_w_samp_meta$Class == "Dicotyledoneae" & means_w_samp_meta$Species != "opaca"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.P[means_w_samp_meta$Species == "opaca"],
+       means_w_samp_meta$mean.P[means_w_samp_meta$Class == "Dicotyledoneae" & means_w_samp_meta$Species != "opaca"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.S.C[means_w_samp_meta$Species == "opaca"],
+       means_w_samp_meta$mean.S.C[means_w_samp_meta$Class == "Dicotyledoneae" & means_w_samp_meta$Species != "opaca"])
+set.seed(0)
+t.test(means_w_samp_meta$mean.S[means_w_samp_meta$Species == "opaca"],
+       means_w_samp_meta$mean.S[means_w_samp_meta$Class == "Dicotyledoneae" & means_w_samp_meta$Species != "opaca"])
+set.seed(0)
+t.test(tf_meta$DOC.TDN_ratio[tf_meta$Species == "opaca"],
+       tf_meta$DOC.TDN_ratio[tf_meta$Class == "Dicotyledoneae" & tf_meta$Species != "opaca"])
+set.seed(0)
+t.test(tf_meta$TDN_mgL[tf_meta$Species == "opaca"],
+       tf_meta$TDN_mgL[tf_meta$Class == "Dicotyledoneae" & tf_meta$Species != "opaca"])
+set.seed(0)
+t.test(tf_meta$DOC_mgL[tf_meta$Species == "opaca"],
+       tf_meta$DOC_mgL[tf_meta$Class == "Dicotyledoneae" & tf_meta$Species != "opaca"])
 
-peak_meta$Uncondensed.aromatic <- NA
-peak_meta$Uncondensed.aromatic[peak_meta$Condensed.aromatic == 0 & peak_meta$Aromatic == 1] <- 1
-peak_meta$Condensed.aromatic[peak_meta$Condensed.aromatic != 0 | peak_meta$Aromatic != 1] <- 0
 
-peak_meta$Uncondensed.aromatic.O_rich <- NA
-peak_meta$Uncondensed.aromatic.O_rich[peak_meta$Condensed.aromatic.O_rich == 0 & peak_meta$Aromatic.O_rich == 1] <- 1
-peak_meta$Uncondensed.aromatic.O_rich[peak_meta$Condensed.aromatic.O_rich != 0 | peak_meta$Aromatic.O_rich != 1] <- 0
+#test for correlations between environmental variables and bulk chemical parameters
+#this can be used to explain the dbrda results
+#don't want rainwater samples included, and can't be run on non-numeric variables
+corr_input_w_precip <- means_w_samp_meta[sapply(means_w_samp_meta, is.numeric)]
+corr_input <- corr_input_w_precip[-(54:58), ]
+corr <- as.data.frame(cor(corr_input, method = "pearson", use = "everything"))
+#doing DOC separately since it has NA values
+corr_DOC <- as.data.frame(cor(corr_input, method = "pearson", use = "complete.obs"))
+write.csv(corr, file = "corr.csv", row.names = TRUE)
+write.csv(corr_DOC, file = "corr_DOC.csv", row.names = TRUE)
 
-peak_meta$Uncondensed.aromatic.O_poor <- NA
-peak_meta$Uncondensed.aromatic.O_poor[peak_meta$Condensed.aromatic.O_poor == 0 & peak_meta$Aromatic.O_poor == 1] <- 1
-peak_meta$Uncondensed.aromatic.O_poor[peak_meta$Condensed.aromatic.O_poor != 0 | peak_meta$Aromatic.O_poor != 1] <- 0
-#should be good, check output and make sure it makes sense and matches what was done in excel
+#calculate significance for chemical parameters with r>0.25
+#focusing on the environmental variables that are significant in the dbrda
+#DOC correlations
+rownames(corr_DOC[corr_DOC$DOC_mgL > 0.25 | corr_DOC$DOC_mgL < -0.25,])
+cor.test(corr_input$DOC_mgL, corr_input$TDN_mgL, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$mean.MW, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$mean.O.C, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$mean.DBE, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$mean.N, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$mean.MW, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$mean.non.CHO.atoms, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.CHO, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.CHON, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.high.unsat, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.high.unsat.O.rich, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.high.unsat.O.poor, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.unsat.O.rich, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.unsat.with.N, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.saturated, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.saturated.O.rich, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.saturated.O.poor, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.sugar.like, use = "complete.obs")
+cor.test(corr_input$DOC_mgL, corr_input$pct.peptide.like, use = "complete.obs")
+#all are significant below p<0.05, many below <0.0001
 
-intens_w_meta <- read_csv(file = 'data/intensities_trimmed.csv')
-#this has formula chemistry parameters in there as well
-#peaks not detected are in there as NA, not 0
+#TDN correlations
+rownames(corr[corr$TDN_mgL > 0.25 | corr$TDN_mgL < -0.25,])
+cor.test(corr_input$TDN_mgL, corr_input$mean.H.C)
+cor.test(corr_input$TDN_mgL, corr_input$mean.AI)
+cor.test(corr_input$TDN_mgL, corr_input$mean.AI.mod)
+cor.test(corr_input$TDN_mgL, corr_input$mean.DBE)
+cor.test(corr_input$TDN_mgL, corr_input$mean.N)
+cor.test(corr_input$TDN_mgL, corr_input$mean.S)
+cor.test(corr_input$TDN_mgL, corr_input$mean.P)
+cor.test(corr_input$TDN_mgL, corr_input$mean.non.CHO.atoms)
+cor.test(corr_input$TDN_mgL, corr_input$pct.CHO)
+cor.test(corr_input$TDN_mgL, corr_input$pct.CHOS)
+cor.test(corr_input$TDN_mgL, corr_input$pct.CHOP)
+cor.test(corr_input$TDN_mgL, corr_input$pct.CHONS)
+cor.test(corr_input$TDN_mgL, corr_input$pct.cond.arom)
+cor.test(corr_input$TDN_mgL, corr_input$pct.cond.arom.O.poor)
+cor.test(corr_input$TDN_mgL, corr_input$pct.uncond.arom)
+cor.test(corr_input$TDN_mgL, corr_input$pct.uncond.arom.O.poor)
+cor.test(corr_input$TDN_mgL, corr_input$pct.arom)
+cor.test(corr_input$TDN_mgL, corr_input$pct.arom.O.poor)
+cor.test(corr_input$TDN_mgL, corr_input$pct.unsat.with.N)
+cor.test(corr_input$TDN_mgL, corr_input$pct.saturated.O.rich)
+cor.test(corr_input$TDN_mgL, corr_input$pct.peptide.like)
+#all are significant below p<0.01, many below p<0.0001
+cor.test(corr_input$TDN_mgL, corr_input$pct.uncond.arom.O.rich)
 
-intensities <- read_csv(file = 'data/intensities_only.csv')
-#this is only mz, formula, and intensities
+#throughfall volume correlations
+rownames(corr[corr$Tf_depth_mm > 0.25 | corr$Tf_depth_mm < -0.25,])
+#only correlates with itself, DOC, and TDN- no chemical parameters
 
-norm_intensities <- read.table(file = 'data/intensities_norm.csv', sep = ",",
-                               header = TRUE, row.names = 1)
-#this has metadata removed, undetected peaks are 0s
-#In case I need them to be NA instead
-#norm_intensities[norm_intensities == 0] <- NA
+#tree size (dbh) correlations
+rownames(corr[corr$DBH_cm > 0.25 | corr$DBH_cm < -0.25,])
+cor.test(corr_input$DBH_cm, corr_input$mean.AI.mod)
+cor.test(corr_input$DBH_cm, corr_input$mean.DBE)
+cor.test(corr_input$DBH_cm, corr_input$mean.N)
+cor.test(corr_input$DBH_cm, corr_input$mean.S)
+cor.test(corr_input$DBH_cm, corr_input$mean.non.CHO.atoms)
+cor.test(corr_input$DBH_cm, corr_input$pct.CHO)
+cor.test(corr_input$DBH_cm, corr_input$pct.CHON)
+cor.test(corr_input$DBH_cm, corr_input$pct.CHOS)
+cor.test(corr_input$DBH_cm, corr_input$pct.unsat.O.rich)
+cor.test(corr_input$DBH_cm, corr_input$pct.unsat.with.N)
+cor.test(corr_input$DBH_cm, corr_input$pct.saturated.O.rich)
+cor.test(corr_input$DBH_cm, corr_input$pct.peptide.like)
+#all are significant below p<0.05, many below p<0.0001
+#this is overall what distinguishes tf from precip, testing for a couple others that agree with this
+cor.test(corr_input$DBH_cm, corr_input$mean.P)
+cor.test(corr_input$DBH_cm, corr_input$mean.MW)
+#molecular weight significant, P content not
 
-#write.table(norm_transp_intensities,
-            file = "norm_transp_intensities.csv", sep = ",", row.names = FALSE)
-#can use this to make sure it looks good at any point
+#building distance correlations
+rownames(corr[corr$BLDG_dist > 0.25 | corr$BLDG_dist < -0.25,])
+cor.test(corr_input$BLDG_dist, corr_input$pct.CHO)
+cor.test(corr_input$BLDG_dist, corr_input$pct.unsat.O.rich)
+#both are significant below p<0.01
 
-#kevin's method
-all_samples <- samp_meta %>% pull(Sample_ID)
-#often don't want precipitation samples included
-tf_samples <- samp_meta %>% 
-  filter(Sample_type !="Precipitation") %>% pull(Sample_ID)
-precip_samples <- samp_meta %>% 
-  filter(Sample_type =="Precipitation") %>% pull(Sample_ID)
-#for use later when hybrid species will be excluded
-#don't end up using this
-tf_nonhyb_samples <- samp_meta %>% 
-  filter(PhyloName !="NA") %>% pull(Sample_ID)
-#for use later when samples with NA DOC values will be excluded
-tf_samples_w_DOC <- samp_meta %>% 
-  filter(DOC_uM !="#N/A" & Sample_type != "Precipitation") %>% pull(Sample_ID)
+#road/train distance correlations
+rownames(corr[corr$ROAD_dist > 0.25 | corr$ROAD_dist < -0.25,])
+rownames(corr_DOC[corr_DOC$ROAD_dist > 0.25 | corr_DOC$ROAD_dist < -0.25,])
+rownames(corr[corr$TRAIN_dist > 0.25 | corr$TRAIN_dist < -0.25,])
+rownames(corr_DOC[corr_DOC$TRAIN_dist > 0.25 | corr_DOC$TRAIN_dist < -0.25,])
+#none have strong explanatory power
+cor.test(corr_input$ROAD_dist, corr_input$pct.cond.arom)
+cor.test(corr_input$ROAD_dist, corr_input$pct.cond.arom.O.rich)
+cor.test(corr_input$ROAD_dist, corr_input$pct.cond.arom.O.poor)
+cor.test(corr_input$TRAIN_dist, corr_input$pct.cond.arom)
+cor.test(corr_input$TRAIN_dist, corr_input$pct.cond.arom.O.rich)
+cor.test(corr_input$TRAIN_dist, corr_input$pct.cond.arom.O.poor)
+#distance from roads/trains doesn't significantly correlate with condensed aromatics (black carbon)
+sample_stats_tf_results["pct.cond.arom",]
+sample_stats_precip_results["pct.cond.arom",]
+min(tf_meta$ROAD_dist)
+max(tf_meta$ROAD_dist)
+min(tf_meta$TRAIN_dist)
+max(tf_meta$TRAIN_dist)
+#look for impact from other potential factors
+rownames(corr[corr$pct.cond.arom > 0.25 | corr$pct.cond.arom < -0.25,])
+#only DOC, TDN, and other chemical parameters have r>0.25
+#testing building distance, tree size, species, class
+cor.test(corr_input$BLDG_dist, corr_input$pct.cond.arom)
+cor.test(corr_input$BLDG_dist, corr_input$pct.cond.arom.O.rich)
+cor.test(corr_input$BLDG_dist, corr_input$pct.cond.arom.O.poor)
+cor.test(corr_input$DBH_cm, corr_input$pct.cond.arom)
+cor.test(corr_input$DBH_cm, corr_input$pct.cond.arom.O.rich)
+cor.test(corr_input$DBH_cm, corr_input$pct.cond.arom.O.poor)
+cor.test(corr_input$Tf_depth_mm, corr_input$pct.cond.arom)
+cor.test(corr_input$Tf_depth_mm, corr_input$pct.cond.arom.O.rich)
+cor.test(corr_input$Tf_depth_mm, corr_input$pct.cond.arom.O.poor)
+cor.test(corr_input$DOC_mgL, corr_input$pct.cond.arom)
+cor.test(corr_input$DOC_mgL, corr_input$pct.cond.arom.O.rich)
+cor.test(corr_input$DOC_mgL, corr_input$pct.cond.arom.O.poor)
+#none are significant
+cor.test(corr_input$TDN_mgL, corr_input$pct.cond.arom)
+cor.test(corr_input$TDN_mgL, corr_input$pct.cond.arom.O.rich)
+cor.test(corr_input$TDN_mgL, corr_input$pct.cond.arom.O.poor)
+#significant negative correlation, following the way TDN is
+#negatively correlated with all aromatics
+cor.test(corr_input$pct.uncond.arom, corr_input$pct.cond.arom)
+cor.test(corr_input$pct.uncond.arom.O.rich, corr_input$pct.cond.arom.O.rich)
+cor.test(corr_input$pct.uncond.arom.O.poor, corr_input$pct.cond.arom.O.poor)
+#strong positive correlation- condensed aromatics seem to just follow other aromatics
+#p<10e-15, r=0.8927868, r2=0.797
+set.seed(0)
+t.test(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Class == "Pinopsida"],
+       means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Class == "Dicotyledoneae"])
+set.seed(0)
+t.test(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Leaf_type == "needles"],
+       means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Leaf_type == "scales"])
+set.seed(0)
+t.test(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Leaf_type == "needles"],
+       means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Leaf_type == "leaves"])
+set.seed(0)
+t.test(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Leaf_type == "leaves"],
+       means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Leaf_type == "scales"])
+mean(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Class == "Pinopsida"])
+std.error(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Class == "Pinopsida"])
+min(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Class == "Pinopsida"])
+max(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Class == "Pinopsida"])
+mean(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Class == "Dicotyledoneae"])
+std.error(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Class == "Dicotyledoneae"])
+min(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Class == "Dicotyledoneae"])
+max(means_w_samp_meta$pct.cond.arom[means_w_samp_meta$Class == "Dicotyledoneae"])
 
-norm_intens_t <- norm_intensities %>% 
-  column_to_rownames("mz") %>%
-  select(all_of(tf_samples)) %>%
-  # mutate(across(everything(), ~
-  #               ~(. - min(., na.rm=TRUE))/
-  #                 range(., na.rm = TRUE))) %>% 
-  #                 # (max(.) - min(.)))) %>% 
-  # na_if(., 0))) %>% #zeros skew z-score
-  as.matrix() %>% t()
-#nmds needs species/mass data as columns across rows(samples), this got it in that format
-#it doesn't need to be a symmetric input
-# scales::rescale(., to = c(0,max(expr_norm2)))
+print(bulk_avgs_species[order(bulk_avgs_species$pct.cond.arom_mean),
+                        c("Species", "pct.cond.arom_mean", "pct.cond.arom_se")], n=37)
 
+
+
+
+norm_intens_t <- norm_intens_t_all
 #check my data format is good
 is.matrix(norm_intens_t)
 #True, that's good
@@ -487,9 +1551,8 @@ colnames(norm_intens_t)
 norm_intens_t[1, ]
 #showing mz and the rel intensity in first sample- good
 str(norm_intens_t)
-#100 rows (sample IDs) by 10799 columns (mzs)- good
-isSymmetric(norm_intens_t)
-#false, that should be fine
+#105 rows (sample IDs) by 10797 columns (mzs)- good
+
 
 #NMDS function
 set.seed(3) #for reproduction, function uses random starts
@@ -500,9 +1563,9 @@ nmds <- metaMDS(comm = norm_intens_t, distance = "bray", k = 3,
 ## could not converge with 2 dimensions
 nmds_plot <- plot(nmds)
 stressplot <- stressplot(nmds) #low scatter indicates nmds ordination good representation of original data
-#linear fit r2=.987, non-metric fit r2=.996
+#linear fit r2=.984, non-metric fit r2=.996
 stress <- nmds$stress
-#stress should be below 0.1; it's 0.062
+#stress should be below 0.1; it's 0.067
 
 #Get ordination data
 #nmds$points contains the positions of each sample in nmds dimensions
@@ -513,7 +1576,7 @@ ord_mass <- scores(nmds, "species") %>%
 
 #add ancillary environmental variables
 ord_samp2 <- left_join(ord_samp, samp_meta, by = "Sample_ID")
-ord_mass2 <- left_join(ord_mass, peak_meta, by = "mz")
+ord_mass2 <- left_join(ord_mass, peak_meta_new, by = "mz")
 
 #plot samples in NMDS space
 p_samp <- ggplot()+
@@ -559,6 +1622,7 @@ plot(subtree)
 #done, tree looks good
 
 #now trying with hybrids as average of the parents
+#first make it with parents
 hybrid_parents <- c("Platanus orientalis", "Platanus occidentalis", "Magnolia denudata", "Magnolia liliiflora")
 species_with_hyb_parents <- species
 species_with_hyb_parents[101:104] <- hybrid_parents
@@ -612,10 +1676,10 @@ cladogram_labels <- c("Koelreuteria paniculata", "Acer palmatum", "Acer griseum"
                       "Quercus acutissima", "Fagus sylvatica", "Liquidambar styraciflua", "Cercidiphyllum japonicum", "Ilex opaca",
                       "Cornus kousa", "Cornus florida", "Nyssa sylvatica", "Magnolia kobus", "Magnolia stellata",
                       "Magnolia virginiana", "Juniperus virginiana", "Callitropsis nootkatensis", "Chamaecyparis obtusa", "Thuja occidentalis",
-                      "Metasequoia glyptostroboides", "Pinus resinosa", "Pinus strobus", "Abies concolor", "Platanus acerifolia", "Magnolia x soulangeana")
+                      "Metasequoia glyptostroboides", "Pinus resinosa", "Pinus strobus", "Abies concolor", "Platanus x. acerifolia", "Magnolia x. soulangeana")
 cluster_nj_phylo2 <- nj(phylo_dist_jmp)
 cluster_nj_phylo2$tip.label <- cladogram_labels
-plot(cluster_nj_phylo2, type = "cladogram")
+plot(cluster_nj_phylo2, type = "cladogram", cex = 0.7)
 plot(cluster_nj_phylo2, type = "tidy")
 write.csv(phylo_dist_for_jmp, "phylo_dist_for_jmp.csv", row.names = TRUE)
 
@@ -637,20 +1701,63 @@ for (i in 1:100) {
 write.csv(phylo_dist_matrix_final_sample, "phylo_dist_matrix_final_sample.csv", row.names = TRUE)
 isSymmetric(phylo_dist_matrix_final_sample)
 
-#now need to expand it to the same size as sample distance matrix
-#which is 94x94 once hybrids are removed
-large_phylo_matrix <- matrix(0, nrow = 94, ncol = 94)
-rownames(large_phylo_matrix) <- tf_nonhyb_samples
-colnames(large_phylo_matrix) <- tf_nonhyb_samples
-for (i in 1:94) {
-  sample_i <- tf_nonhyb_samples[i]
-  species_i <- samp_meta$PhyloName[samp_meta$Sample_ID == sample_i]
-  for (j in 1:94) {
-    sample_j <- tf_nonhyb_samples[j]
-    species_j <- samp_meta$PhyloName[samp_meta$Sample_ID == sample_j]
-    large_phylo_matrix[i,j] <- phylo_dist_matrix[species_i, species_j]
-  }
-}
+#alternative: making it manually to be more taxonomy focused
+#and be able to control structure better
+#this is final Figure 1
+taxonomy_initial <- as.data.frame(tf_meta[c("Phylum", "Class", "Order", "Family", "Genus", "Latin")])
+taxonomy_initial$Latin[48:50] <- "Platanus x. acerifolia"
+taxonomy_initial$Latin[82:84] <- "Magnolia x. soulangeana"
+taxonomy_initial$Kingdom <- "Plantae"
+taxonomy_initial <- taxonomy_initial %>% mutate(Phylum_Class = paste(Phylum, Class, sep = "/"))
+taxonomy <- taxonomy_initial[, c("Kingdom", "Phylum_Class", "Order", "Family", "Genus", "Latin")]
+colnames(taxonomy) <- c("Kingdom", "Phylum_Class", "Order", "Family", "Genus", "Species")
+taxonomy$pathString <- paste(taxonomy$Kingdom, taxonomy$Phylum_Class, taxonomy$Order,
+                             taxonomy$Family, taxonomy$Genus, taxonomy$Species, sep = "|")
+taxonomy_tree <- as.Node(taxonomy, pathDelimiter = "|")
+plot(taxonomy_tree)
+taxonomy_phylo <- as.phylo(taxonomy_tree)
+plot(taxonomy_phylo, type = "cladogram", show.node.label = TRUE,
+     cex = 0.7, label.offset = 0.1, no.margin = TRUE)
+plot(taxonomy_phylo, type = "phylogram", show.node.label = TRUE, cex = 0.7)
+#adjusting placement of names to be on top of lines instead of nodes
+tree_data <- ggtree(taxonomy_phylo, ladderize = TRUE)$data
+tree_data <- tree_data %>%
+  mutate(parent_x = x[match(parent, node)],
+         mid_x = (x + parent_x) / 2)
+root_row <- tree_data %>% filter(node == parent)
+root_x <- root_row$x
+root_y <- root_row$y
+root_label_data <- data.frame(x = -6, xend = 0, y = root_y, yend = root_y)
+nonroot_tree_data <- tree_data %>% filter(node != parent)
+nonroot_tree_data <- nonroot_tree_data %>%
+  mutate(
+    display_label = ifelse(isTip, gsub("_", " ", label), label),
+    label_face = ifelse(isTip, "italic", "plain")
+  )
+
+depth <- data.frame(1:5, c(10, 30, 50, 70, 90))
+colnames(depth) <- c("depth", "header_x")
+header_labels <- data.frame(
+  depth  = 0:5,
+  rank_name = c("Kingdom", "Phylum/Class", "Order", "Family", "Genus", "Species")
+)
+header_data <- header_labels %>%
+  left_join(depth, by = "depth")
+header_data$header_x[header_data$depth == 0] <- -3
+header_y <- max(tree_data$y) + 2
+header_data$y <- header_y
+#plot
+ggtree(taxonomy_phylo, ladderize = TRUE) +
+  geom_text(data = nonroot_tree_data, size = 3, vjust = -0.5,
+            aes(x = mid_x, y = y, label = display_label, fontface = label_face)) +
+  geom_segment(data = root_label_data, aes(x = x, xend = xend, y = y, yend = yend)) + 
+  geom_text(data = root_label_data, aes(x = x + 3, y = y, label = "Plantae"),
+            size = 3, vjust = -0.5) +
+  geom_text(data = header_data, aes(x = header_x, y = y, label = rank_name),
+            size = 4, fontface = "bold") +
+  theme_tree2() +
+  xlim(-8, 100) +
+  coord_cartesian(clip = "off")
 
 #rda on norm intensities
 #analyzes peaks, can look for peaks associated w/ env variables
@@ -658,20 +1765,8 @@ for (i in 1:94) {
 #peaks same input as bray, just need to remove precip from metadata
 #columns wanted: tf volume, DOC and TDN conc, DBH,
 #and distance, sine, and cosine for buildings, roads, and trains
-rda_metadata <- as.data.frame(samp_meta[-(54:58), c(14, 15, 18, 22, 43, 45, 46, 47, 49, 50, 51, 53, 54)])
+rda_metadata <- as.data.frame(samp_meta[-(54:58), c(56, 16, 19, 23, 44, 46, 47, 48, 50, 51, 52, 54, 55)])
 #fix that to be names instead of numbers
-#shouldn't need these because did them above
-rda_metadata$DBH_cm <- as.numeric(rda_metadata$DBH_cm)
-rda_metadata$BLDG_dist <- as.numeric(rda_metadata$BLDG_dist)
-rda_metadata$ROAD_dist <- as.numeric(rda_metadata$ROAD_dist)
-rda_metadata$TRAIN_dist <- as.numeric(rda_metadata$TRAIN_dist)
-rda_metadata$DOC_uM <- as.numeric(rda_metadata$DOC_uM)
-rda_metadata$BLDG_sin <- as.numeric(rda_metadata$BLDG_sin)
-rda_metadata$BLDG_cos <- as.numeric(rda_metadata$BLDG_cos)
-rda_metadata$ROAD_sin <- as.numeric(rda_metadata$ROAD_sin)
-rda_metadata$ROAD_cos <- as.numeric(rda_metadata$ROAD_cos)
-rda_metadata$TRAIN_sin <- as.numeric(rda_metadata$TRAIN_sin)
-rda_metadata$TRAIN_cos <- as.numeric(rda_metadata$TRAIN_cos)
 
 rownames(rda_metadata) <- tf_samples
 rda_peaks <- rda(bray_input_all ~ ., data = rda_metadata, na.action = na.exclude)
@@ -686,6 +1781,7 @@ plot(rda_peaks)
 dbrda <- dbrda(peak_dist_matrix_all ~ ., data = rda_metadata, na.action = na.exclude)
 summary(dbrda)
 summary(dbrda)$cont
+par(mfrow = c(1, 1))
 plot(dbrda)
 dbrda$CCA$tot.chi / dbrda$tot.chi
 dbrda$CA$tot.chi / dbrda$tot.chi
@@ -722,8 +1818,31 @@ dbrda_signif <- dbrda(peak_dist_matrix_all ~ ., data = rda_meta_signif, na.actio
 plot(dbrda_signif, type = "n")
 text(dbrda_signif, display = "bp", col = "blue", cex = 0.8)
 points(dbrda_signif, display = "sites", pch = 20, col = "black", cex = 0.8)
+
+#significance testing
+dbrda_signif$CCA$tot.chi / dbrda_signif$tot.chi
+dbrda_signif$CA$tot.chi / dbrda_signif$tot.chi
+#27.5% of variance constrained by these 5 variables, 72.5% unconstrained
+anova(dbrda_signif, permutations = 999)
+anova(dbrda_signif, by = "terms", permutations = 999)
+#DOC and TDN significant at P<.001 level
+#tf volume and dbh significant at P<.05 level
+#building distance almost significant but usually 0.5<P<0.1
+anova(dbrda_signif, by = "axis", permutations = 999)
+#first two axes are significant at P<.001 level, others not significant
+summary(dbrda_signif)
+
+#also want to see how chemistry plots in dbrda
+chem_for_dbrda_bulk <- FTICRMS_means_t[-(54:58), c(1, 2, 3, 5, 10, 11, 12)]
+arrows_chem_bulk <- envfit(dbrda_signif, chem_for_dbrda_bulk, permutations = 999, na.rm = TRUE)
+chem_for_dbrda_classes <- FTICRMS_means_t[-(54:58), c(19:39)]
+arrows_chem_classes <- envfit(dbrda_signif, chem_for_dbrda_classes, permutations = 999, na.rm = TRUE)
+#dbrda_chem_bulk <- dbrda(peak_dist_matrix_all ~., data = chem_for_dbrda_bulk, na.action = na.exclude)
+#dbrda_chem_classes <- dbrda(peak_dist_matrix_all ~., data = chem_for_dbrda_classes, na.action = na.exclude)
+#plot(dbrda_chem_bulk)
+
 #want to project the rainwater samples into the same space
-norm_intens_t_w_precip <- norm_intensities %>% 
+#norm_intens_t_w_precip <- norm_intensities %>% 
   column_to_rownames("mz") %>%
   select(all_of(all_samples)) %>%
   # mutate(across(everything(), ~
@@ -732,16 +1851,30 @@ norm_intens_t_w_precip <- norm_intensities %>%
   #                 # (max(.) - min(.)))) %>% 
   # na_if(., 0))) %>% #zeros skew z-score
   as.matrix() %>% t()
-peak_dist_w_precip <- vegdist(norm_intens_t_w_precip, method = "bray")
+peak_dist_w_precip <- vegdist(norm_intens_t_all, method = "bray")
 peak_dist_matrix_w_precip <- as.matrix(peak_dist_w_precip)
-tf_scores <- scores(dbrda_signif)
-all_scores <- capscale(peak_dist_w_precip ~ 1)
-positions_all <- scores(all_scores, display = "sites", choices = c(1, 2))
-positions_precip <- positions_all[precip_samples, ]
-plot(dbrda_signif, type = "n", xlim = c(-3, 3), ylim = c(-2., 2))
+tf_indices <- which(all_samples %in% tf_samples_w_DOC)
+positions_all <- wcmdscale(peak_dist_w_precip, k = 2, eig = TRUE)
+positions_tf <- positions_all$points[-(54:58),]
+positions_precip <- positions_all$points[(54:58),]
+positions_tf_w_DOC <- positions_all$points[tf_indices,]
+scores_tf <- scores(dbrda_signif, display = "sites", choices = c(1, 2))
+scores_tf_w_DOC <- scores_tf[tf_samples_w_DOC,]
+procr_tf <- procrustes(scores_tf_w_DOC, positions_tf_w_DOC)
+precip_in_dbrda <- predict(procr_tf, positions_precip)
+
+plot(dbrda_signif, type = "n")
 text(dbrda_signif, display = "bp", col = "blue", cex = 0.8)
 points(dbrda_signif, display = "sites", pch = 20, col = "black", cex = 0.8)
-points(positions_precip, pch = 17, col = "red", cex = 0.8)
+points(precip_in_dbrda, pch = 17, col = "red", cex = 0.8)
+
+#adding labels
+plot(dbrda_signif, type = "n", choices = c(1, 2), scaling = -1, xlim = c(-3, 3), ylim = c(-2, 2))
+text(dbrda_signif, display = "bp", col = "blue", cex = 0.8)
+points(positions_all, pch = 17, col = "darkgray", cex = 0.8)
+points(dbrda_signif, display = "sites", pch = 20, col = "black", cex = 0.8)
+points(precip_in_dbrda, pch = 17, col = "red", cex = 0.8)
+text(precip_in_dbrda, display = "sites", labels = rownames(precip_in_dbrda), pos = 3, cex = 0.6, offset = 0.3)
 legend("topright",
        legend = c("Throughfall", "Rain"),
        col = c("black", "red"), pch = c(20, 17),
@@ -750,35 +1883,97 @@ legend("topright",
 #want to see if conifers/magnolias cluster uniquely
 conifers <- samp_meta %>% 
   filter(Class =="Pinopsida") %>% pull(Sample_ID)
-positions_conifer <- positions_all[conifers, ]
+positions_conifer <- positions_all$points[conifers, ]
 magnolias <- samp_meta %>% 
   filter(Order == "Magnoliales") %>% pull(Sample_ID)
-positions_magnolia <- positions_all[magnolias, ]
+positions_magnolia <- positions_all$points[magnolias, ]
 other_tf <- samp_meta %>% 
   filter(Class !="Pinopsida" & Order != "Magnoliales" & Sample_type != "Precipitation") %>% pull(Sample_ID)
-positions_other <- positions_all[other_tf, ]
+positions_other <- positions_all$points[other_tf, ]
 
-order_groups <- ifelse(tf_meta$Order == "Pinales", "Pinales",
+order_groups <- ifelse(tf_meta$Class == "Pinopsida", "Pinopsida",
                        ifelse(tf_meta$Order == "Magnoliales", "Magnoliales",
                               "Other"))
-order_colors <- c("Pinales" = "forestgreen", "Magnoliales" = "purple", "Other" = "gray40")
-order_shapes <- c("Pinales" = 22, "Magnoliales" = 25, "Other" = 21)
+order_colors <- c("Pinopsida" = "forestgreen", "Magnoliales" = "purple", "Other" = "gray40")
+order_shapes <- c("Pinopsida" = 22, "Magnoliales" = 25, "Other" = 21)
 plot(dbrda_signif, type = "n", xlim = c(-3, 3), ylim = c(-2., 1.9))
 text(dbrda_signif, display = "bp", col = "blue", cex = 0.8, lwd = 1.5)
-for(group in c("Other", "Pinales", "Magnoliales")) {
+#plot(arrows_chem_bulk, col = "darkred", cex = 0.8, lwd = 1.5)
+for(group in c("Other", "Pinopsida", "Magnoliales")) {
   indices <- which(order_groups == group)
   points(dbrda_signif, display = "sites", select = indices,
          col = order_colors[group], bg = order_colors[group],
          pch = order_shapes[group], cex = 0.8)
 }
-points(positions_precip, pch = 17, col = "red", cex = 0.8)
+points(precip_in_dbrda, pch = 17, col = "red", cex = 0.8)
 legend("topright",
-       legend = c("Pinales", "Magnoliales", "Other", "Rain"),
+       legend = c("Pinopsida", "Magnoliales", "Other", "Rain"),
        pch = c(22, 25, 21, 17),
        col = c("forestgreen", "purple", "gray40", "red"),
        pt.bg = c("forestgreen", "purple", "gray40", "red"),
-       cex = 0.8, bty = "n", inset = c(0.08, 0), y.intersp = 0.6)
+       cex = 0.8, bty = "n", inset = c(0.15, 0), y.intersp = 0.6)
+#isn't using my x and y limits, redrawing manually to make it use them
+
+site_scores_signif <- scores(dbrda_signif, display = "sites", choices = c(1, 2))
+bp_scores_signif <- scores(dbrda_signif, display = "bp", choices = c(1, 2))
+label_offsets_dbrda <- data.frame(
+  x = c(0.14, -0.1, 0.1, -0.27, -0.45),
+  y = c(0.12, -0.1, -0.1, 0, -0.015)
+)
+rownames(label_offsets_dbrda) <- rownames(bp_scores_signif)
+
+#final version
+pdf("dbrda_plot.pdf", width = 8, height = 8)
+plot(NA, xlim = c(-1.5, 3), ylim = c(-2.2, 1), xaxs = "i", yaxs = "i",
+     xlab = "dbRDA1", ylab = "dbRDA2")
+abline(h = 0, v = 0, lty = 3, col = "gray50")
+for(group in c("Other", "Pinopsida", "Magnoliales")) {
+  indices <- which(order_groups == group)
+  points(site_scores_signif[indices, ],
+         col = order_colors[group], bg = order_colors[group],
+         pch = order_shapes[group], cex = 1.0)
+}
+arrows(0, 0, bp_scores_signif[, 1], bp_scores_signif[, 2],
+       col = "blue", length = 0.1, lwd = 1.5)
+text(bp_scores_signif[, 1] + label_offsets_dbrda$x, bp_scores_signif[, 2] + label_offsets_dbrda$y,
+     labels = c("TF volume", "[DOC]", "[TDN]", "Tree size", "Building distance"), col = "blue", cex = 1.0)
+points(precip_in_dbrda, pch = 17, col = "red", cex = 1.0)
+legend("topleft",
+       legend = c("Pinopsida TF", "Magnoliales TF", "Other TF", "Rainwater"),
+       pch = c(22, 25, 21, 17),
+       col = c("forestgreen", "purple", "gray40", "red"),
+       pt.bg = c("forestgreen", "purple", "gray40", "red"),
+       cex = 1.0, bty = "n", inset = c(0.02, -0.01), y.intersp = 1.4)
+dev.off()
+#this is final dbrda, fig 2
+
+#writing dbrda scores to csv for inclusion in Table S4
+write.csv(site_scores_signif, "site_scores_signif.csv", row.names = TRUE)
+write.csv(precip_in_dbrda, "precip_in_dbrda.csv", row.names = TRUE)
+
+#testing for correlations between explanatory variables and dbrda axes 1 and 2
+cor.test(site_scores_signif[, 1], rda_meta_signif$Volume, method = "pearson")
+cor.test(site_scores_signif[, 2], rda_meta_signif$Volume, method = "pearson")
+cor.test(site_scores_signif[, 1], rda_meta_signif$`[DOC]`, method = "pearson")
+cor.test(site_scores_signif[, 2], rda_meta_signif$`[DOC]`, method = "pearson")
+cor.test(site_scores_signif[, 1], rda_meta_signif$`[TDN]`, method = "pearson")
+cor.test(site_scores_signif[, 2], rda_meta_signif$`[TDN]`, method = "pearson")
+cor.test(site_scores_signif[, 1], rda_meta_signif$`Tree size`, method = "pearson")
+cor.test(site_scores_signif[, 2], rda_meta_signif$`Tree size`, method = "pearson")
+cor.test(site_scores_signif[, 1], rda_meta_signif$`Building distance`, method = "pearson")
+cor.test(site_scores_signif[, 2], rda_meta_signif$`Building distance`, method = "pearson")
+vars_dbrda <- colnames(rda_meta_signif)
+for (v in vars_dbrda) {
+  for (axis in 1:2) {
+    result <- cor.test(site_scores_signif[, axis], rda_meta_signif[[gsub("`", "", v)]])
+    cat(v, "- dbRDA", axis, ": r =", round(result$estimate, 3),
+        ", p =", round(result$p.value, 4), "\n")
+  }
+}
+
+
 #adding density ellipses around the four groups
+#ended up not using these as they were visually cluttering
 ordiellipse(dbrda_signif, groups = order_groups,
             col = c("purple", "gray40", "forestgreen"), border = c("purple", "gray40", "forestgreen"),
             draw = "polygon", alpha = 50, lwd = 1,
@@ -808,19 +2003,8 @@ precip_meta_rda_clean$`Tree size` <- as.numeric(precip_meta_rda_clean$`Tree size
 precip_meta_rda_clean$`Building distance` <- as.numeric(precip_meta_rda_clean$`Building distance`)
 precip_scores <- predict(dbrda_signif, newdata = precip_meta_rda_clean, type = "lc", na.action = na.exclude)
 
-
-anova(dbrda_signif, permutations = 999)
-anova(dbrda_signif, by = "terms", permutations = 999)
-anova(dbrda_signif, by = "axis", permutations = 999)
-#same result as with all variables
-#DOC and TDN significant at P<.001 level
-#tf volume and dbh significant at P<.05 level
-#building distance almost significant but 0.5<P<0.1
-dbrda_signif$CCA$tot.chi / dbrda_signif$tot.chi
-#constrains 27.5% of variance
-
 #test individual environmental variables for significance and variation explained
-no_NA_vars <- colnames(rda_metadata)[!colnames(rda_metadata) %in% "DOC_uM"]
+no_NA_vars <- colnames(rda_metadata[,colnames(rda_metadata) != "DOC_mgL"])
 individual_results <- list()
 for(var in no_NA_vars) {
   formula <- as.formula(paste("peak_dist_matrix_all ~", var))
@@ -837,7 +2021,7 @@ for(var in no_NA_vars) {
 explanatory_vars <- do.call(rbind, lapply(individual_results, data.frame))
 explanatory_vars <- explanatory_vars[order(explanatory_vars$variance_explained, decreasing = TRUE), ]
 print(explanatory_vars)
-#this is showing only TDN being significant on its own, DBH is close (.058)
+#this is showing only TDN being significant on its own, DBH is close (.062)
 #now running dbrda on DOC alone because NA values interfere
 DOC_test <- !is.na(rda_metadata[["DOC_uM"]])
 DOC_samples <- rda_metadata[DOC_test, ]
@@ -860,20 +2044,7 @@ print(paste("DOC - Variance Explained:", var_explained_DOC_2))
 print(paste("p-value:", sig_test_DOC_2$`Pr(>F)`[1]))
 #exact same result as above: 11.01% of variance explained, significant at .001
 
-#Figure 2: db-rda for environmental variables explaining mass spec similarities
-#want precip samples in there too so can project them onto dbrda plot
-norm_intens_t_w_precip <- norm_intensities %>% 
-  column_to_rownames("mz") %>%
-  select(all_of(all_samples)) %>%
-  # mutate(across(everything(), ~
-  #               ~(. - min(., na.rm=TRUE))/
-  #                 range(., na.rm = TRUE))) %>% 
-  #                 # (max(.) - min(.)))) %>% 
-  # na_if(., 0))) %>% #zeros skew z-score
-  as.matrix() %>% t()
-peak_dist_w_precip <- vegdist(norm_intens_t_w_precip, method = "bray")
-peak_dist_matrix_w_precip <- as.matrix(peak_dist_w_precip)
-tf_scores <- scores()
+
 
 
 
@@ -901,17 +2072,17 @@ print(paste("Condition number:", cond_numb))
 
 #analyzing phylogeny data for significance
 #excluding phylum because it's no broader than class
-#there are 2 different classes, 12 orders, 16 families, 23 genera, and 36 species
-phenolog_meta <- as.data.frame(samp_meta[-(54:58), (5:9)], as.factor)
-rownames(phenolog_meta) <- tf_samples
-phenolog_vars <- colnames(samp_meta)[5:9]
-phenolog_signif <- list()
-for(var in phenolog_vars) {
+#there are 2 different classes, 12 orders, 16 families, 24 genera, and 36 species
+phylo_meta <- as.data.frame(samp_meta[-(54:58), (5:9)], as.factor)
+rownames(phylo_meta) <- tf_samples
+phylo_vars <- colnames(phylo_meta)
+phylo_signif <- list()
+for(var in phylo_vars) {
   formula_ph <- as.formula(paste("peak_dist_matrix_all ~", var))
-  single_dbrda_ph <- dbrda(formula_ph, data = phenolog_meta)
+  single_dbrda_ph <- dbrda(formula_ph, data = phylo_meta)
   sig_test_ph <- anova(single_dbrda_ph, permutations = 999)
   var_explained_ph <- single_dbrda_ph$CCA$tot.chi / single_dbrda_ph$tot.chi
-  phenolog_signif[[var]] <- list(
+  phylo_signif[[var]] <- list(
     variable = var,
     variance_explained = var_explained_ph,
     p_value = sig_test_ph$`Pr(>F)`[1],
@@ -919,54 +2090,55 @@ for(var in phenolog_vars) {
     df = sig_test_ph$Df[1]
   )
 }
-phenolog_signif_results <- do.call(rbind, lapply(phenolog_signif, data.frame))
-phenolog_signif_results <- phenolog_signif_results[order(phenolog_signif_results$variance_explained, decreasing = TRUE), ]
-print(phenolog_signif_results)
+phylo_signif_results <- do.call(rbind, lapply(phylo_signif, data.frame))
+phylo_signif_results <- phylo_signif_results[order(phylo_signif_results$variance_explained, decreasing = TRUE), ]
+print(phylo_signif_results)
 
-norm_intens_t_meta <- cbind(phenolog_meta, norm_intens_t)
+norm_intens_t_meta <- cbind(phylo_meta, norm_intens_t[-(54:58),])
 write.csv(norm_intens_t_meta, "norm_intens_t_meta.csv", row.names = TRUE)
-#permanova on phenological data- this shows the same results as dbrda above
-for(var in phenolog_vars) {
+
+#permanova on phylogeny data- this shows the same results as dbrda above
+for(var in phylo_vars) {
   formula <- as.formula(paste("peak_dist_matrix_all ~", var))
-  permanova_result <- adonis2(formula, data = phenolog_meta, permutations = 999)
+  permanova_result <- adonis2(formula, data = phylo_meta, permutations = 999)
   print(paste("Variable:", var))
   print(permanova_result)
   cat("\n")
 }
 #all 5 levels separately are significant at .001 level
-#class explains 5.7% of variation, order 26.0%, family 33.2%, genus 40.5%, and species 52.9%
-#there's a good linear relationship between # of categories in a phenological level and % of variance explained
+#class explains 5.8% of variation, order 26.0%, family 33.2%, genus 42.0%, and species 55.5%
+#there's a good linear relationship between # of categories in a phylogenetic level and % of variance explained
 
 #now look at them sequentially instead of individually
-phenolog_meta[phenolog_vars] <- lapply(phenolog_meta[phenolog_vars], as.factor)
-sequential_phenolog <- list()
+phylo_meta[phylo_vars] <- lapply(phylo_meta[phylo_vars], as.factor)
+sequential_phylo <- list()
 remaining_var <- 1.0
 for(i in 1:5) {
-  current_var <- phenolog_vars[i]
+  current_var <- phylo_vars[i]
   if(i == 1) {
-    formula_phenolog <- as.formula(paste("peak_dist_matrix_all ~", current_var))
-    dbrda_phenolog <- dbrda(formula_phenolog, data = phenolog_meta)
+    formula_phylo <- as.formula(paste("peak_dist_matrix_all ~", current_var))
+    dbrda_phylo <- dbrda(formula_phylo, data = phylo_meta)
   } else {
-    conditioning_vars <- paste(phenolog_vars[1:(i-1)], collapse = " + ")
-    formula_phenolog <- as.formula(paste("peak_dist_matrix_all ~", current_var, "+ Condition(", conditioning_vars, ")"))
-    dbrda_phenolog <- dbrda(formula_phenolog, data = phenolog_meta)
+    conditioning_vars <- paste(phylo_vars[1:(i-1)], collapse = " + ")
+    formula_phylo <- as.formula(paste("peak_dist_matrix_all ~", current_var, "+ Condition(", conditioning_vars, ")"))
+    dbrda_phylo <- dbrda(formula_phylo, data = phylo_meta)
   }
   if(i == 1) {
-    var_explained_total <- dbrda_phenolog$CCA$tot.chi / dbrda_phenolog$tot.chi
+    var_explained_total <- dbrda_phylo$CCA$tot.chi / dbrda_phylo$tot.chi
     var_explained_remaining <- var_explained_total
   } else {
-    var_explained_total <- dbrda_phenolog$CCA$tot.chi / dbrda_phenolog$tot.chi
+    var_explained_total <- dbrda_phylo$CCA$tot.chi / dbrda_phylo$tot.chi
     var_explained_remaining <- var_explained_total / remaining_var
   }
   remaining_var <- remaining_var - var_explained_total
-  sig_test_phenolog <- anova(dbrda_phenolog, permutations = 999)
-  sequential_phenolog[[current_var]] <- list(
+  sig_test_phylo <- anova(dbrda_phylo, permutations = 999)
+  sequential_phylo[[current_var]] <- list(
     variable = current_var,
     variance_explained_total = var_explained_total,
     variance_explained_remaining = var_explained_remaining,
     remaining_variance_after = remaining_var,
     p_value = sig_test$`Pr(>F)`[1],
-    F_statistic = sig_test_phenolog$F[1]
+    F_statistic = sig_test_phylo$F[1]
   )
   cat("Level:", current_var, "\n")
   cat("Variance explained (of total):", round(var_explained_total, 4), "\n")
@@ -974,35 +2146,35 @@ for(i in 1:5) {
   cat("P-value:", sig_test$`Pr(>F)`[1], "\n")
   cat("Remaining variance:", round(remaining_var, 4), "\n\n")
 }
-sequential_df <- do.call(rbind, lapply(sequential_phenolog, data.frame))
+sequential_df <- do.call(rbind, lapply(sequential_phylo, data.frame))
 print(sequential_df)
-#this shows the same results as doing them independently except that species increased (15% instead of 12.4%)
-#also the p values are odd, all showing the same (0.721)
-###I think that's because I used sig_test instead of sig_test_phenolog in a couple of places- check
+#this shows the same results as doing them independently
+#also the p values are odd, all showing the same (0.705)
+###I think that's because I used sig_test instead of sig_test_phylo in a couple of places- check
 
 #restricted permutations to get meaningful p values, though with reduced statistical power
-seq_phenolog_restr <- list()
+seq_phylo_restr <- list()
 for (i in 1:5) {
-  current_var_rest <- phenolog_vars[i]
+  current_var_rest <- phylo_vars[i]
   if(i == 1) {
     formula_rest <- as.formula(paste("peak_dist_matrix_all ~", current_var_rest))
-    dbrda_rest <- dbrda(formula_rest, data = phenolog_meta)
+    dbrda_rest <- dbrda(formula_rest, data = phylo_meta)
     sig_test_rest <- anova(dbrda_rest, permutations = 999)
   } else {
-    conditioning_vars_rest <- paste(phenolog_vars[1:(i-1)], collapse = " + ")
+    conditioning_vars_rest <- paste(phylo_vars[1:(i-1)], collapse = " + ")
     formula_rest <- as.formula(paste("peak_dist_matrix_all ~", current_var_rest, "+ Condition(", conditioning_vars_rest, ")"))
-    dbrda_rest <- dbrda(formula_rest, data = phenolog_meta)
+    dbrda_rest <- dbrda(formula_rest, data = phylo_meta)
     if(i == 2) {
       perm_design <- how(within = Within(type = "free"),
-                         blocks = phenolog_meta[[phenolog_vars[1]]])
+                         blocks = phylo_meta[[phylo_vars[1]]])
     } else {
       perm_design <- how(within = Within(type = "free"),
-                         blocks = phenolog_meta[[phenolog_vars[i-1]]])
+                         blocks = phylo_meta[[phylo_vars[i-1]]])
     }
     sig_test_rest <- anova(dbrda_rest, permutations = perm_design)
   }
   var_explained_total_rest <- dbrda_rest$CCA$tot.chi / dbrda_rest$tot.chi
-  seq_phenolog_restr[[current_var_rest]] <- list(
+  seq_phylo_restr[[current_var_rest]] <- list(
     variable = current_var_rest,
     variance_explained = var_explained_total_rest,
     p_value = sig_test_rest$`Pr(>F)`[1],
@@ -1012,16 +2184,16 @@ for (i in 1:5) {
   cat("Variance explained:", round(var_explained_total_rest, 4), "\n")
   cat("P-value:", sig_test_rest$`Pr(>F)`[1], "\n\n")
 }
-#result: class explains 5.76% of variation, p-value .002; order explains 20.23%, p .005; 
-#family explains 7.21%, p .05; genus explains 7.34%, p .055; species explains 15%, p .06
+#result: class explains 5.76% of variation, p-value .004; order explains additional 20.23%, p .005; 
+#family explains 7.21%, p .03; genus explains 8.81%, p .035; species explains 13.5%, p .075
 #these are percentages of total variance explained
 #of remaining variance, it's 5.76%, 21.47%, 9.74%, 10.99%, and 25.24%
 #remaining variance after is 94.23%, 74.00%, 66.79%, 59.45%, and 44.44%
 
-plot(dbrda_phenolog, type = "n")
-points(dbrda_phenolog, display = "sites", pch = 19, col = Order, cex = 0.8)
-text(dbrda_phenolog, display = "sites", labels = rownames(rda_metadata), pos = 3, cex = 0.6, offset = 0.3)
-text(dbrda_phenolog, display = family, col = "red", cex = 0.8)
+plot(dbrda_phylo, type = "n")
+points(dbrda_phylo, display = "sites", pch = 19, col = Order, cex = 0.8)
+text(dbrda_phylo, display = "sites", labels = rownames(rda_metadata), pos = 3, cex = 0.6, offset = 0.3)
+text(dbrda_phylo, display = family, col = "red", cex = 0.8)
 
 #exporting dbrda for use in jmp
 site_scores <- scores(dbrda, display = "sites")
@@ -1030,15 +2202,15 @@ site_scores_full <- cbind(site_scores_df, tf_meta)
 write.csv(site_scores_full, "dbrda_scores.csv", row.names = FALSE)
 
 #exporting phylogeny dbrda for use in jmp
-site_scores_phenolog <- scores(dbrda_phenolog, display = "sites")
-site_scores_phenolog_df <- data.frame(SampleID = rownames(site_scores_phenolog), site_scores_phenolog)
-site_scores_phenolog_full <- cbind(site_scores_phenolog_df, tf_meta)
-write.csv(site_scores_phenolog_full, "dbrda_scores_phenolog.csv", row.names = FALSE)
+site_scores_phylo <- scores(dbrda_phylo, display = "sites")
+site_scores_phylo_df <- data.frame(SampleID = rownames(site_scores_phylo), site_scores_phylo)
+site_scores_phylo_full <- cbind(site_scores_phylo_df, tf_meta)
+write.csv(site_scores_phylo_full, "dbrda_scores_phylo.csv", row.names = FALSE)
 
 
 #analysis of env variables on residuals after phylogeny
-species_formula <- as.formula(paste("peak_dist_matrix_all ~", paste(phenolog_meta, collapse = " + ")))
-dbrda_species <- dbrda(species_formula, data = phenolog_meta)
+species_formula <- as.formula(paste("peak_dist_matrix_all ~", paste(phylo_meta, collapse = " + ")))
+dbrda_species <- dbrda(species_formula, data = phylo_meta)
 residual_after_phylo <- residuals(dbrda_species)
 residual_dist <- as.dist(residual_after_phylo)
 residual_matrix <- as.matrix(residual_dist)
